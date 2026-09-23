@@ -1,0 +1,51 @@
+import { AppNotification } from '../types/notification';
+
+export const INITIAL_NOTIFICATIONS: AppNotification[] = [
+  {
+    id: 'notif-1',
+    title: 'New Tenant Inquiry Received',
+    body: 'Ananya Roy sent an inquiry for your listing "Luxury 3 BHK Penthouse". Tap to respond.',
+    category: 'inquiry',
+    timestamp: '10 minutes ago',
+    isRead: false,
+    targetScreen: 'ChatDetail',
+    targetId: 'chat-1',
+  },
+  {
+    id: 'notif-2',
+    title: 'Price Drop Alert in Indiranagar',
+    body: 'A shortlisted property in Indiranagar reduced rent by ₹3,000/month. Check it now!',
+    category: 'price_drop',
+    timestamp: '2 hours ago',
+    isRead: false,
+    targetScreen: 'PropertyDetail',
+    targetId: 'prop-1',
+  },
+  {
+    id: 'notif-3',
+    title: 'Service Booking Confirmed',
+    body: 'Your Packers & Movers slot for Sep 28 has been confirmed with assigned team lead Ramesh.',
+    category: 'booking',
+    timestamp: '1 day ago',
+    isRead: true,
+    targetScreen: 'MyBookings',
+    targetId: 'bk-901',
+  },
+  {
+    id: 'notif-4',
+    title: 'Rent Payment Receipt Generated',
+    body: 'September 2026 rent payment receipt for ₹38,000 has been sent to your registered email.',
+    category: 'payment',
+    timestamp: '3 days ago',
+    isRead: true,
+    targetScreen: 'PayRent',
+  },
+  {
+    id: 'notif-5',
+    title: 'Welcome to Kirayedar24 Pro!',
+    body: 'Your account is now verified. Explore zero-brokerage verified listings with confidence.',
+    category: 'system',
+    timestamp: '5 days ago',
+    isRead: true,
+  },
+];
