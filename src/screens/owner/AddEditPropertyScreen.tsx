@@ -22,7 +22,11 @@ import {
   PropertyCategory,
   PropertyType,
   FurnishingStatus,
+  KitchenType,
+  TenantPreference,
+  FoodPreference,
 } from '../../types/property';
+import { getIndianStates, getCitiesForState, getLocalitiesForCity } from '../../data/locationData';
 import { AppHeader } from '../../components/common/AppHeader';
 import { FormField } from '../../components/common/FormField';
 import { Button } from '../../components/common/Button';
@@ -73,7 +77,8 @@ export const AddEditPropertyScreen: React.FC<Props> = ({ route, navigation }) =>
   const [description, setDescription] = useState(existing?.description || '');
 
   // Step 2: Location
-  const [city, setCity] = useState(existing?.location.city || 'Bangalore');
+  const [stateName, setStateName] = useState(existing?.location.state || 'Delhi NCR');
+  const [city, setCity] = useState(existing?.location.city || 'New Delhi');
   const [locality, setLocality] = useState(existing?.location.locality || '');
   const [address, setAddress] = useState(existing?.location.address || '');
   const [landmark, setLandmark] = useState(existing?.location.landmark || '');
@@ -88,6 +93,15 @@ export const AddEditPropertyScreen: React.FC<Props> = ({ route, navigation }) =>
   const [bathrooms, setBathrooms] = useState(existing?.bathrooms || 2);
   const [areaSqFt, setAreaSqFt] = useState(existing?.areaSqFt ? String(existing.areaSqFt) : '1250');
   const [furnishing, setFurnishing] = useState<FurnishingStatus>(existing?.furnishing || 'Semi-Furnished');
+  const [kitchenType, setKitchenType] = useState<KitchenType>(existing?.kitchenType || 'Modular');
+  const [preferredTenants, setPreferredTenants] = useState<TenantPreference[]>(
+    existing?.preferredTenants || ['Family', 'Bachelors (Boys)', 'Bachelors (Girls)']
+  );
+  const [foodPreference, setFoodPreference] = useState<FoodPreference>(
+    existing?.foodPreference || 'Any (Veg & Non-Veg)'
+  );
+  const [electricityIncluded, setElectricityIncluded] = useState<boolean>(existing?.electricityIncluded || false);
+  const [waterIncluded, setWaterIncluded] = useState<boolean>(existing?.waterIncluded || true);
   const [facing, setFacing] = useState(existing?.facing || 'East Facing (Vastu)');
   const [parking, setParking] = useState(existing?.parking || '1 Covered Car Parking');
 
@@ -173,7 +187,7 @@ export const AddEditPropertyScreen: React.FC<Props> = ({ route, navigation }) =>
     );
   };
 
-  const handleFinalSubmit = async (status: 'published' | 'draft' = 'published') => {
+  const handleFinalSubmit = async (status: 'under_review' | 'draft' = 'under_review') => {
     setLoading(true);
 
     const propertyPayload = {
@@ -189,10 +203,16 @@ export const AddEditPropertyScreen: React.FC<Props> = ({ route, navigation }) =>
       bathrooms,
       areaSqFt: Number(areaSqFt),
       furnishing,
+      kitchenType,
+      preferredTenants,
+      foodPreference,
+      electricityIncluded,
+      waterIncluded,
       floor,
       facing,
       parking,
       location: {
+        state: stateName,
         address,
         locality,
         city,
@@ -204,7 +224,7 @@ export const AddEditPropertyScreen: React.FC<Props> = ({ route, navigation }) =>
     };
 
     if (isEditing && propertyId) {
-      updateProperty(propertyId, propertyPayload);
+      updateProperty(propertyId, { ...propertyPayload, status });
       setLoading(false);
       Alert.alert('Updated!', 'Property details have been successfully updated.', [
         { text: 'Done', onPress: () => navigation.goBack() },
@@ -213,8 +233,10 @@ export const AddEditPropertyScreen: React.FC<Props> = ({ route, navigation }) =>
       await addProperty(propertyPayload);
       setLoading(false);
       Alert.alert(
-        'Listing Submitted! 🎉',
-        'Your listing has been submitted and is currently under verification audit. Verified listings receive 3x higher responses.',
+        status === 'draft' ? 'Draft Saved! 💾' : 'Listing Submitted for Review! 📋',
+        status === 'draft'
+          ? 'Your listing has been saved as a local draft. You can complete and submit it whenever you are ready.'
+          : 'Your listing has been submitted and is currently queued for Kirayedar24 verification audit. Admin approval is required before it goes live.',
         [{ text: 'View My Properties', onPress: () => navigation.navigate('MyProperties') }]
       );
     }
@@ -307,8 +329,8 @@ export const AddEditPropertyScreen: React.FC<Props> = ({ route, navigation }) =>
               <Text style={styles.fieldLabel}>Property Type</Text>
               <View style={styles.chipsRow}>
                 {(category === 'residential'
-                  ? (['Apartment', 'Villa', 'Independent House', 'Studio'] as PropertyType[])
-                  : (['Office Space', 'Shop / Showroom', 'Warehouse'] as PropertyType[])
+                  ? (['Apartment', 'Flat', 'Room', 'PG', 'Villa', 'Independent House', 'Studio'] as PropertyType[])
+                  : (['Commercial Space', 'Office Space', 'Shop / Showroom', 'Warehouse', 'Plot / Land'] as PropertyType[])
                 ).map((t) => (
                   <FilterChip
                     key={t}
@@ -352,22 +374,66 @@ export const AddEditPropertyScreen: React.FC<Props> = ({ route, navigation }) =>
             <View>
               <Text style={styles.stepTitle}>Property Location & Address</Text>
 
-              <FormField
-                label="City"
-                value={city}
-                onChangeText={setCity}
-                placeholder="e.g. Bangalore"
-                required
-              />
+              {/* State Selector */}
+              <Text style={styles.fieldLabel}>State / Region</Text>
+              <View style={styles.chipsRow}>
+                {getIndianStates().map((st) => (
+                  <FilterChip
+                    key={st}
+                    label={st}
+                    selected={stateName === st}
+                    onPress={() => {
+                      setStateName(st);
+                      const availableCities = getCitiesForState(st);
+                      if (availableCities.length > 0) {
+                        setCity(availableCities[0]);
+                        setLocality('');
+                      }
+                    }}
+                  />
+                ))}
+              </View>
+
+              {/* City Selector */}
+              <Text style={styles.fieldLabel}>City ({stateName})</Text>
+              <View style={styles.chipsRow}>
+                {getCitiesForState(stateName).map((c) => (
+                  <FilterChip
+                    key={c}
+                    label={c}
+                    selected={city === c}
+                    onPress={() => {
+                      setCity(c);
+                      setLocality('');
+                    }}
+                  />
+                ))}
+              </View>
+
+              {/* Locality suggestions */}
+              <Text style={styles.fieldLabel}>Popular Localities in {city}</Text>
+              <View style={styles.chipsRow}>
+                {getLocalitiesForCity(city, stateName).slice(0, 8).map((loc) => (
+                  <FilterChip
+                    key={loc}
+                    label={loc}
+                    selected={locality === loc}
+                    onPress={() => {
+                      setLocality(loc);
+                      if (errors.locality) setErrors({ ...errors, locality: '' });
+                    }}
+                  />
+                ))}
+              </View>
 
               <FormField
-                label="Locality / Sector / Area"
+                label="Locality / Sector / Area Name"
                 value={locality}
                 onChangeText={(l) => {
                   setLocality(l);
                   if (errors.locality) setErrors({ ...errors, locality: '' });
                 }}
-                placeholder="e.g. Indiranagar, Sector 2 HSR"
+                placeholder="e.g. Indiranagar, Sector 62, Malviya Nagar"
                 error={errors.locality}
                 required
                 leftIcon={<Icon name="map-pin" size={18} color={colors.textSecondary} />}
@@ -474,6 +540,53 @@ export const AddEditPropertyScreen: React.FC<Props> = ({ route, navigation }) =>
                         label={`${bath} Bath`}
                         selected={bathrooms === bath}
                         onPress={() => setBathrooms(bath)}
+                      />
+                    ))}
+                  </View>
+
+                  <Text style={styles.fieldLabel}>Kitchen Type</Text>
+                  <View style={styles.chipsRow}>
+                    {(['Modular', 'Simple / Standard', 'Semi-Modular'] as KitchenType[]).map((k) => (
+                      <FilterChip
+                        key={k}
+                        label={k}
+                        selected={kitchenType === k}
+                        onPress={() => setKitchenType(k)}
+                      />
+                    ))}
+                  </View>
+
+                  <Text style={styles.fieldLabel}>Preferred Tenants</Text>
+                  <View style={styles.chipsRow}>
+                    {(['Family', 'Bachelors (Boys)', 'Bachelors (Girls)', 'Students', 'Any / All'] as TenantPreference[]).map(
+                      (pref) => {
+                        const isSelected = preferredTenants.includes(pref);
+                        return (
+                          <FilterChip
+                            key={pref}
+                            label={pref}
+                            selected={isSelected}
+                            onPress={() => {
+                              setPreferredTenants((prev) =>
+                                prev.includes(pref)
+                                  ? prev.filter((p) => p !== pref)
+                                  : [...prev, pref]
+                              );
+                            }}
+                          />
+                        );
+                      }
+                    )}
+                  </View>
+
+                  <Text style={styles.fieldLabel}>Food Preferences Allowed</Text>
+                  <View style={styles.chipsRow}>
+                    {(['Vegetarian Only', 'Any (Veg & Non-Veg)'] as FoodPreference[]).map((f) => (
+                      <FilterChip
+                        key={f}
+                        label={f}
+                        selected={foodPreference === f}
+                        onPress={() => setFoodPreference(f)}
                       />
                     ))}
                   </View>
@@ -604,7 +717,7 @@ export const AddEditPropertyScreen: React.FC<Props> = ({ route, navigation }) =>
                   </Text>
                   <Text style={styles.reviewTitle}>{title}</Text>
                   <Text style={styles.reviewLocality}>
-                    📍 {locality}, {city}
+                    📍 {locality}, {city} ({stateName})
                   </Text>
 
                   <View style={styles.reviewSpecs}>
@@ -624,7 +737,7 @@ export const AddEditPropertyScreen: React.FC<Props> = ({ route, navigation }) =>
               <View style={styles.auditNotice}>
                 <Icon name="shield-check" size={20} color={colors.primaryDark} />
                 <Text style={styles.auditNoticeText}>
-                  Your listing will undergo physical audit verification within 24 hours. Once verified, it will receive the golden verified badge.
+                  Your listing will undergo verification review before being published. Admin approval is required for all public listings.
                 </Text>
               </View>
             </View>
@@ -653,10 +766,10 @@ export const AddEditPropertyScreen: React.FC<Props> = ({ route, navigation }) =>
               disabled={loading}
             />
             <Button
-              title={isEditing ? 'Update Listing' : 'Submit for Verification'}
+              title={isEditing ? 'Update Listing' : 'Submit for Review'}
               variant="primary"
               size="lg"
-              onPress={() => handleFinalSubmit('published')}
+              onPress={() => handleFinalSubmit('under_review')}
               style={{ flex: 1.5 }}
               loading={loading}
             />

@@ -20,6 +20,7 @@ import { useProperty } from '../../context/PropertyContext';
 import { useBooking } from '../../context/BookingContext';
 import { ConfirmationModal } from '../../components/common/ConfirmationModal';
 import { Icon, IconName } from '../../components/common/Icon';
+import { isSubscriptionActive } from '../../services/subscriptionService';
 
 interface MenuItem {
   id: string;
@@ -35,11 +36,12 @@ export const ProfileScreen: React.FC = () => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { user, role, toggleRole, logout } = useAuth();
   const { shortlistedIds, myProperties } = useProperty();
-  const { bookings } = useBooking();
+  const { bookings, activeSubscription } = useBooking();
 
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
 
   const isOwner = role === 'owner';
+  const hasActiveListingPlan = isSubscriptionActive(activeSubscription);
 
   const menuSections: { title: string; items: MenuItem[] }[] = [
     {
@@ -64,8 +66,8 @@ export const ProfileScreen: React.FC = () => {
                 id: 'subscription',
                 icon: 'award' as IconName,
                 title: 'Owner Subscription Plans',
-                subtitle: 'Gold Pro Booster Active',
-                badge: 'PRO',
+                subtitle: hasActiveListingPlan ? 'Verified listing plan active' : 'No verified active plan',
+                badge: hasActiveListingPlan ? 'ACTIVE' : undefined,
                 onPress: () => navigation.navigate('Subscription'),
               },
             ]
@@ -136,6 +138,20 @@ export const ProfileScreen: React.FC = () => {
       title: 'Support & Legal',
       items: [
         {
+          id: 'terms',
+          icon: 'shield-check' as IconName,
+          title: 'Terms & Conditions',
+          subtitle: 'Operational terms & zero-brokerage policy',
+          onPress: () => navigation.navigate('TermsAndConditions'),
+        },
+        {
+          id: 'privacy-policy',
+          icon: 'lock' as IconName,
+          title: 'Privacy Policy',
+          subtitle: 'DPDPA data protection & encryption standards',
+          onPress: () => navigation.navigate('PrivacyPolicy'),
+        },
+        {
           id: 'help',
           icon: 'help' as IconName,
           title: 'Help Center & FAQs',
@@ -157,6 +173,7 @@ export const ProfileScreen: React.FC = () => {
         },
       ],
     },
+
   ];
 
   return (

@@ -7,6 +7,7 @@ import { SignupScreen } from '../screens/auth/SignupScreen';
 import { ForgotPasswordScreen } from '../screens/auth/ForgotPasswordScreen';
 import { OtpVerificationScreen } from '../screens/auth/OtpVerificationScreen';
 import { TermsAndConditionsScreen } from '../screens/auth/TermsAndConditionsScreen';
+import { PrivacyPolicyScreen } from '../screens/auth/PrivacyPolicyScreen';
 
 const Stack = createNativeStackNavigator<AuthStackParamList>();
 
@@ -25,6 +26,8 @@ export const AuthNavigator: React.FC = () => {
       <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
       <Stack.Screen name="OtpVerification" component={OtpVerificationScreen} />
       <Stack.Screen name="TermsAndConditions" component={TermsAndConditionsScreen} />
+      <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicyScreen} />
     </Stack.Navigator>
   );
 };
+

@@ -5,7 +5,7 @@ import { SERVICES_DATA, INITIAL_BOOKINGS, SUBSCRIPTION_PLANS } from '../mock/ser
 interface BookingContextType {
   services: ServiceItem[];
   bookings: ServiceBooking[];
-  activeSubscription: SubscriptionPlan;
+  activeSubscription: SubscriptionPlan | null;
   rentPayments: RentPayment[];
   createBooking: (
     service: ServiceItem,
@@ -61,7 +61,7 @@ const BookingContext = createContext<BookingContextType | undefined>(undefined);
 export const BookingProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [services] = useState<ServiceItem[]>(SERVICES_DATA);
   const [bookings, setBookings] = useState<ServiceBooking[]>(INITIAL_BOOKINGS);
-  const [activeSubscription, setActiveSubscription] = useState<SubscriptionPlan>(SUBSCRIPTION_PLANS[1]); // Gold Pro
+  const [activeSubscription, setActiveSubscription] = useState<SubscriptionPlan | null>(null);
   const [rentPayments, setRentPayments] = useState<RentPayment[]>(INITIAL_RENT_PAYMENTS);
 
   const createBooking = async (
@@ -132,7 +132,7 @@ export const BookingProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const changeSubscription = (plan: SubscriptionPlan) => {
-    setActiveSubscription(plan);
+    setActiveSubscription({ ...plan, expiresAt: undefined });
   };
 
   return (

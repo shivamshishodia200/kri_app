@@ -9,6 +9,7 @@ import {
   Platform,
   ScrollView,
   StatusBar,
+  Pressable,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { AuthStackParamList } from '../../types/navigation';
@@ -21,6 +22,7 @@ import { Button } from '../../components/common/Button';
 import { Icon } from '../../components/common/Icon';
 import { useAuth } from '../../context/AuthContext';
 import { UserRole } from '../../types/user';
+import { submitWithRequiredConsent } from '../../services/consentSubmission';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'Login'>;
 
@@ -30,11 +32,16 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<UserRole>('buyer');
   const [loading, setLoading] = useState(false);
-  const [errors, setErrors] = useState<{ identifier?: string; password?: string }>({});
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [errors, setErrors] = useState<{
+    identifier?: string;
+    password?: string;
+    terms?: string;
+  }>({});
 
   const validate = () => {
     let valid = true;
-    let newErrors: { identifier?: string; password?: string } = {};
+    let newErrors: { identifier?: string; password?: string; terms?: string } = {};
 
     if (!identifier.trim()) {
       newErrors.identifier = 'Enter mobile number or email';
@@ -47,27 +54,50 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
       newErrors.password = 'Password must be at least 6 characters';
       valid = false;
     }
+    if (!acceptedTerms) {
+      newErrors.terms = 'Agree to the Terms & Conditions and Privacy Policy to continue.';
+      valid = false;
+    }
 
     setErrors(newErrors);
     return valid;
   };
 
   const handleLogin = async () => {
+    if (loading) return;
     if (!validate()) return;
     setLoading(true);
-    await login(identifier, role);
-    setLoading(false);
+    try {
+      const submission = await submitWithRequiredConsent(acceptedTerms, () => login(identifier, role));
+      if (!submission.accepted) {
+        setErrors((current) => ({
+          ...current,
+          terms: 'Agree to the Terms & Conditions and Privacy Policy to continue.',
+        }));
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleQuickOtpLogin = () => {
+  const handleQuickOtpLogin = async () => {
+    if (loading) return;
     if (!identifier.trim()) {
-      setErrors({ identifier: 'Please enter mobile number to receive OTP' });
+      setErrors({ identifier: 'Please enter mobile number or email to receive OTP' });
       return;
     }
-    navigation.navigate('OtpVerification', {
-      phoneOrEmail: identifier,
-      mode: 'signup',
+
+    const submission = await submitWithRequiredConsent(acceptedTerms, () => {
+      navigation.navigate('OtpVerification', {
+        phoneOrEmail: identifier,
+        mode: 'signup',
+      });
     });
+    if (!submission.accepted) {
+      setErrors({ terms: 'Agree to the Terms & Conditions and Privacy Policy to continue.' });
+      return;
+    }
+    setErrors({});
   };
 
   const fillDemoCredentials = (selectedRole: UserRole) => {
@@ -185,6 +215,53 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
               leftIcon={<Icon name="lock" size={18} color={colors.textSecondary} />}
             />
 
+            <View style={styles.consentContainer}>
+              <View style={[styles.consentRow, Boolean(errors.terms) && styles.consentRowError]}>
+                <Pressable
+                  onPress={() => {
+                    setAcceptedTerms((current) => !current);
+                    if (errors.terms) setErrors((current) => ({ ...current, terms: undefined }));
+                  }}
+                  style={styles.checkboxTouchTarget}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: acceptedTerms }}
+                  accessibilityLabel="I agree to the Terms and Conditions and Privacy Policy"
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <View style={[styles.checkbox, acceptedTerms && styles.checkboxActive]}>
+                    {acceptedTerms && <Icon name="check" size={13} color="#0F172A" strokeWidth={3} />}
+                  </View>
+                </Pressable>
+                <View style={styles.consentTextWrapper}>
+                  <View style={styles.termsCopy}>
+                    <Text style={styles.termsText}>I agree to the </Text>
+                    <TouchableOpacity
+                      onPress={() => navigation.navigate('TermsAndConditions')}
+                      style={styles.policyLinkTarget}
+                      accessibilityRole="link"
+                      accessibilityLabel="Read Terms and Conditions"
+                    >
+                      <Text style={styles.termsLink}>Terms & Conditions</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.termsText}> and </Text>
+                    <TouchableOpacity
+                      onPress={() => navigation.navigate('PrivacyPolicy')}
+                      style={styles.policyLinkTarget}
+                      accessibilityRole="link"
+                      accessibilityLabel="Read Privacy Policy"
+                    >
+                      <Text style={styles.termsLink}>Privacy Policy</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+              {Boolean(errors.terms) && (
+                <Text style={styles.inlineErrorText} accessibilityRole="alert">
+                  {errors.terms}
+                </Text>
+              )}
+            </View>
+
             {/* Forgot Password Row */}
             <View style={styles.forgotRow}>
               <TouchableOpacity
@@ -200,6 +277,7 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
               title="Sign In to Kirayedar24"
               onPress={handleLogin}
               loading={loading}
+              disabled={loading}
               variant="primary"
               size="lg"
               fullWidth
@@ -389,6 +467,81 @@ const styles = StyleSheet.create({
   roleTabTextActive: {
     color: '#0F172A',
     fontWeight: '800',
+  },
+  consentContainer: {
+    marginTop: 2,
+    marginBottom: 12,
+  },
+  consentRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  consentRowError: {
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEF2F2',
+  },
+  checkboxTouchTarget: {
+    width: 44,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 4,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  checkboxActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primaryDark,
+  },
+  consentTextWrapper: {
+    flex: 1,
+    paddingVertical: 4,
+  },
+  termsCopy: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+  },
+  termsText: {
+    ...typography.caption,
+    fontSize: 12,
+    color: '#334155',
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  policyLinkTarget: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  termsLink: {
+    ...typography.caption,
+    fontSize: 12,
+    color: colors.primaryDark,
+    fontWeight: '700',
+    textDecorationLine: 'underline',
+  },
+  inlineErrorText: {
+    ...typography.caption,
+    color: colors.danger,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+    marginTop: 4,
+    paddingHorizontal: 8,
   },
   forgotRow: {
     alignItems: 'flex-end',

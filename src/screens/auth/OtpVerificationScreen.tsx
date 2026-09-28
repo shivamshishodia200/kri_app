@@ -17,18 +17,21 @@ import { radii, spacing } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
 import { AppHeader } from '../../components/common/AppHeader';
 import { Button } from '../../components/common/Button';
+import { Icon } from '../../components/common/Icon';
 import { useAuth } from '../../context/AuthContext';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'OtpVerification'>;
 
 export const OtpVerificationScreen: React.FC<Props> = ({ route, navigation }) => {
-  const { phoneOrEmail, mode } = route.params;
-  const { login } = useAuth();
+  const { phoneOrEmail, mode, role = 'buyer' } = route.params;
+  const { verifySignupOtp, resendOtp, login } = useAuth();
 
-  const [otp, setOtp] = useState(['2', '4', '8', '9', '', '']);
+  const [otp, setOtp] = useState(['2', '4', '8', '9', '0', '0']);
   const [timer, setTimer] = useState(45);
   const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
   const [canResend, setCanResend] = useState(false);
+  const [errorText, setErrorText] = useState<string | null>(null);
 
   const inputRefs = useRef<Array<TextInput | null>>([]);
 
@@ -45,6 +48,7 @@ export const OtpVerificationScreen: React.FC<Props> = ({ route, navigation }) =>
   }, [timer]);
 
   const handleOtpChange = (val: string, index: number) => {
+    if (errorText) setErrorText(null);
     const newOtp = [...otp];
     newOtp[index] = val;
     setOtp(newOtp);
@@ -61,24 +65,68 @@ export const OtpVerificationScreen: React.FC<Props> = ({ route, navigation }) =>
     }
   };
 
-  const handleResend = () => {
-    if (!canResend) return;
-    setTimer(45);
-    setCanResend(false);
-    Alert.alert('OTP Sent', `A new 6-digit code has been sent to ${phoneOrEmail}`);
+  const handleResend = async () => {
+    if (!canResend || resending) return;
+    setResending(true);
+    try {
+      const res = await resendOtp(phoneOrEmail);
+      setResending(false);
+      if (res.success) {
+        setTimer(45);
+        setCanResend(false);
+        setErrorText(null);
+        Alert.alert('OTP Resent', `A new 6-digit verification code has been sent to ${phoneOrEmail}.`);
+      } else {
+        Alert.alert('Error', res.error || 'Failed to resend OTP.');
+      }
+    } catch {
+      setResending(false);
+      Alert.alert('Network Error', 'Could not resend OTP. Please check your network.');
+    }
   };
 
   const handleVerify = async () => {
     const fullCode = otp.join('');
     if (fullCode.length < 6) {
-      Alert.alert('Incomplete Code', 'Please enter the complete 6-digit OTP code.');
+      setErrorText('Please enter the complete 6-digit OTP code.');
       return;
     }
 
     setLoading(true);
-    // Verified successfully in demo mode
-    await login(phoneOrEmail, 'buyer');
-    setLoading(false);
+    setErrorText(null);
+
+    try {
+      if (mode === 'signup') {
+        const res = await verifySignupOtp(phoneOrEmail, fullCode);
+        setLoading(false);
+
+        if (!res.success) {
+          if (res.requiresPolicyReconsent) {
+            Alert.alert(
+              'Policy Updated',
+              'The platform terms were updated. Please review and agree to the newest policy.',
+              [
+                {
+                  text: 'Review Terms',
+                  onPress: () => navigation.navigate('Signup', { defaultRole: role }),
+                },
+              ]
+            );
+          } else {
+            setErrorText(res.error || 'Invalid OTP code. Please try again.');
+          }
+        }
+        // If success, AuthContext automatically updates isAuthenticated = true,
+        // and AppNavigator renders the role-based main screens.
+      } else {
+        // Reset / quick login
+        await login(phoneOrEmail, role);
+        setLoading(false);
+      }
+    } catch (e: any) {
+      setLoading(false);
+      setErrorText('Failed to verify OTP due to a network error. Please try again.');
+    }
   };
 
   return (
@@ -97,7 +145,7 @@ export const OtpVerificationScreen: React.FC<Props> = ({ route, navigation }) =>
 
         <View style={styles.mockModeBanner}>
           <Text style={styles.mockModeText}>
-            🧪 Demo Mode: Enter any 6-digit OTP (e.g. 248900)
+            🧪 Demo Mode: Enter 6-digit OTP (Default prefilled: 248900)
           </Text>
         </View>
 
@@ -115,17 +163,29 @@ export const OtpVerificationScreen: React.FC<Props> = ({ route, navigation }) =>
               style={[
                 styles.otpBox,
                 Boolean(digit) && styles.otpBoxFilled,
+                Boolean(errorText) && styles.otpBoxError,
               ]}
               selectTextOnFocus
+              accessibilityLabel={`OTP digit ${index + 1}`}
             />
           ))}
         </View>
 
+        {/* Inline Error Message */}
+        {Boolean(errorText) && (
+          <View style={styles.errorBanner}>
+            <Icon name="alert-circle" size={15} color={colors.danger} />
+            <Text style={styles.errorBannerText}>{errorText}</Text>
+          </View>
+        )}
+
         {/* Resend Timer */}
         <View style={styles.resendRow}>
           {canResend ? (
-            <TouchableOpacity onPress={handleResend}>
-              <Text style={styles.resendActiveText}>Resend OTP Code</Text>
+            <TouchableOpacity onPress={handleResend} disabled={resending} activeOpacity={0.7}>
+              <Text style={styles.resendActiveText}>
+                {resending ? 'Sending new code...' : 'Resend OTP Code'}
+              </Text>
             </TouchableOpacity>
           ) : (
             <Text style={styles.resendTimerText}>
@@ -135,13 +195,15 @@ export const OtpVerificationScreen: React.FC<Props> = ({ route, navigation }) =>
         </View>
 
         <Button
-          title="Verify & Continue"
+          title="Verify & Activate Account"
           onPress={handleVerify}
           loading={loading}
+          disabled={loading}
           variant="primary"
           size="lg"
           fullWidth
           style={styles.verifyButton}
+          icon={<Icon name="check" size={18} color="#0F172A" strokeWidth={3} />}
         />
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -183,7 +245,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.primaryMuted,
-    marginBottom: spacing.xxl,
+    marginBottom: spacing.xl,
   },
   mockModeText: {
     ...typography.caption,
@@ -194,7 +256,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     width: '100%',
-    marginBottom: spacing.xl,
+    marginBottom: spacing.md,
     paddingHorizontal: spacing.sm,
   },
   otpBox: {
@@ -213,8 +275,29 @@ const styles = StyleSheet.create({
     borderColor: colors.primaryDark,
     backgroundColor: colors.primarySubtle,
   },
+  otpBoxError: {
+    borderColor: colors.danger,
+    backgroundColor: '#FFF5F5',
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    marginBottom: spacing.md,
+  },
+  errorBannerText: {
+    ...typography.caption,
+    color: colors.danger,
+    fontWeight: '600',
+  },
   resendRow: {
-    marginBottom: spacing.xxl,
+    marginBottom: spacing.xl,
   },
   resendTimerText: {
     ...typography.bodySmall,
@@ -234,3 +317,4 @@ const styles = StyleSheet.create({
     width: '100%',
   },
 });
+

@@ -16,6 +16,8 @@ import { Button } from '../common/Button';
 import { FilterChip } from '../common/FilterChip';
 import { Icon } from '../common/Icon';
 
+import { getIndianStates, getCitiesForState, getLocalitiesForCity } from '../../data/locationData';
+
 interface FilterModalProps {
   visible: boolean;
   onClose: () => void;
@@ -26,6 +28,10 @@ interface FilterModalProps {
 
 const PROPERTY_TYPES: PropertyType[] = [
   'Apartment',
+  'Flat',
+  'Room',
+  'PG',
+  'Commercial Space',
   'Villa',
   'Independent House',
   'Studio',
@@ -193,6 +199,51 @@ export const FilterModal: React.FC<FilterModalProps> = ({
                 </Text>
               </TouchableOpacity>
             ))}
+          </View>
+
+          {/* State / Region */}
+          <Text style={styles.sectionTitle}>State / Region</Text>
+          <View style={styles.chipsRow}>
+            {getIndianStates().map((st) => {
+              const isSelected = localFilter.state === st;
+              return (
+                <FilterChip
+                  key={st}
+                  label={st}
+                  selected={isSelected}
+                  onPress={() =>
+                    setLocalFilter((prev) => ({
+                      ...prev,
+                      state: prev.state === st ? '' : st,
+                      city: '', // reset city when state changes
+                    }))
+                  }
+                />
+              );
+            })}
+          </View>
+
+          {/* City Selector */}
+          <Text style={styles.sectionTitle}>
+            City {localFilter.state ? `(${localFilter.state})` : ''}
+          </Text>
+          <View style={styles.chipsRow}>
+            {getCitiesForState(localFilter.state || 'Delhi NCR').map((c) => {
+              const isSelected = localFilter.city === c;
+              return (
+                <FilterChip
+                  key={c}
+                  label={c}
+                  selected={isSelected}
+                  onPress={() =>
+                    setLocalFilter((prev) => ({
+                      ...prev,
+                      city: prev.city === c ? '' : c,
+                    }))
+                  }
+                />
+              );
+            })}
           </View>
 
           {/* Bedrooms / BHK */}

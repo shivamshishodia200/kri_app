@@ -26,17 +26,28 @@ import { Button } from '../../components/common/Button';
 import { InquiryModal } from '../../components/property/InquiryModal';
 import { Icon } from '../../components/common/Icon';
 
+import { ContactUnlockModal } from '../../components/common/ContactUnlockModal';
+import { propertyService } from '../../services/propertyService';
+
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 type Props = NativeStackScreenProps<RootStackParamList, 'PropertyDetail'>;
 
 export const PropertyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
   const { propertyId, property: propFromParam } = route.params;
-  const { getPropertyById, isShortlisted, toggleShortlist } = useProperty();
+  const { getPropertyById, isShortlisted, toggleShortlist, recordRecentlyViewed } = useProperty();
   const { startOrGetThreadForProperty } = useChat();
 
   const property = propFromParam || getPropertyById(propertyId);
   const [inquiryModalVisible, setInquiryModalVisible] = useState(false);
+  const [contactUnlockVisible, setContactUnlockVisible] = useState(false);
+
+  React.useEffect(() => {
+    if (property?.id) {
+      recordRecentlyViewed(property.id);
+    }
+  }, [property?.id]);
+
 
   if (!property) {
     return (
@@ -61,25 +72,43 @@ export const PropertyDetailScreen: React.FC<Props> = ({ route, navigation }) => 
     }
   };
 
-  const handleCallOwner = () => {
-    Alert.alert(
-      'Direct Landlord Call',
-      `Connecting call to verified ${property.owner.role} ${property.owner.name} at ${property.owner.phone}`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Call Now',
-          onPress: () => {
-            Linking.openURL(`tel:${property.owner.phone.replace(/[^0-9+]/g, '')}`).catch(() => {
-              Alert.alert('Calling unavailable on device/simulator');
-            });
-          },
-        },
-      ]
-    );
+  const handleContactPress = async () => {
+    const entitlement = await propertyService.checkContactEntitlement(property.id);
+    if (!entitlement.allowed) {
+      setContactUnlockVisible(true);
+      return;
+    }
+    try {
+      await Linking.openURL(`tel:${entitlement.phone}`);
+    } catch {
+      Alert.alert('Call unavailable', 'Could not open the phone dialer on this device.');
+    }
   };
 
-  const handleStartChat = () => {
+  const handleWhatsAppPress = async () => {
+    const entitlement = await propertyService.checkContactEntitlement(property.id);
+    if (!entitlement.allowed) {
+      setContactUnlockVisible(true);
+      return;
+    }
+    if (!entitlement.whatsapp) {
+      Alert.alert('WhatsApp unavailable', 'No verified WhatsApp contact is available for this listing.');
+      return;
+    }
+    const whatsappNumber = entitlement.whatsapp.replace(/\D/g, '');
+    try {
+      await Linking.openURL(`https://wa.me/${whatsappNumber}`);
+    } catch {
+      Alert.alert('WhatsApp unavailable', 'Could not open WhatsApp on this device.');
+    }
+  };
+
+  const handleStartChat = async () => {
+    const entitlement = await propertyService.checkContactEntitlement(property.id);
+    if (!entitlement.allowed) {
+      setContactUnlockVisible(true);
+      return;
+    }
     const threadId = startOrGetThreadForProperty(
       property.id,
       property.title,
@@ -92,6 +121,12 @@ export const PropertyDetailScreen: React.FC<Props> = ({ route, navigation }) => 
       title: property.owner.name,
       participantName: property.owner.name,
     });
+  };
+
+  const handleToggleShortlist = async () => {
+    if (!(await toggleShortlist(property.id))) {
+      Alert.alert('Saved properties', 'Could not sync this favorite. Please retry.');
+    }
   };
 
   return (
@@ -119,7 +154,7 @@ export const PropertyDetailScreen: React.FC<Props> = ({ route, navigation }) => 
 
           <TouchableOpacity
             activeOpacity={0.8}
-            onPress={() => toggleShortlist(property.id)}
+            onPress={handleToggleShortlist}
             style={[styles.headerCircleBtn, saved && styles.headerCircleBtnSaved]}
           >
             <Icon
@@ -267,20 +302,37 @@ export const PropertyDetailScreen: React.FC<Props> = ({ route, navigation }) => 
             <View style={styles.ownerActionsRow}>
               <TouchableOpacity
                 style={styles.callOwnerButton}
-                onPress={handleCallOwner}
+                onPress={handleContactPress}
                 activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Unlock landlord contact details"
               >
-                <Icon name="phone" size={15} color="#0F172A" />
-                <Text style={styles.callOwnerText}>Call Owner</Text>
+                <Icon name="lock" size={15} color="#0F172A" />
+                <Text style={styles.callOwnerText}>
+                  Unlock Contact (₹49)
+                </Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.chatOwnerButton}
                 onPress={handleStartChat}
                 activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Chat with owner on app"
               >
                 <Icon name="chat" size={15} color="#FFFFFF" />
                 <Text style={styles.chatOwnerText}>Chat on App</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.whatsappOwnerButton}
+                onPress={handleWhatsAppPress}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Request verified WhatsApp contact access"
+              >
+                <Icon name="chat" size={15} color="#FFFFFF" />
+                <Text style={styles.chatOwnerText}>WhatsApp</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -336,6 +388,8 @@ export const PropertyDetailScreen: React.FC<Props> = ({ route, navigation }) => 
             style={styles.secondaryActionBtn}
             onPress={() => setInquiryModalVisible(true)}
             activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Schedule physical property visit"
           >
             <Icon name="calendar" size={16} color="#0F172A" />
             <Text style={styles.secondaryActionText}>Schedule Visit</Text>
@@ -345,6 +399,8 @@ export const PropertyDetailScreen: React.FC<Props> = ({ route, navigation }) => 
             style={styles.primaryActionBtn}
             onPress={handleStartChat}
             activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Inquire now and chat with owner"
           >
             <Icon name="chat" size={16} color="#0F172A" />
             <Text style={styles.primaryActionText}>Inquire Now</Text>
@@ -357,6 +413,14 @@ export const PropertyDetailScreen: React.FC<Props> = ({ route, navigation }) => 
         visible={inquiryModalVisible}
         onClose={() => setInquiryModalVisible(false)}
         property={property}
+      />
+
+      {/* Contact Unlock Modal with Gateway Notice */}
+      <ContactUnlockModal
+        visible={contactUnlockVisible}
+        onClose={() => setContactUnlockVisible(false)}
+        ownerName={property.owner.name}
+        propertyTitle={property.title}
       />
     </View>
   );
@@ -634,10 +698,12 @@ const styles = StyleSheet.create({
   },
   ownerActionsRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
   },
   callOwnerButton: {
-    flex: 1,
+    flexBasis: '47%',
+    flexGrow: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -655,12 +721,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   chatOwnerButton: {
-    flex: 1,
+    flexBasis: '47%',
+    flexGrow: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
     backgroundColor: '#0F172A',
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  whatsappOwnerButton: {
+    flexBasis: '47%',
+    flexGrow: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#15803D',
     paddingVertical: 10,
     borderRadius: 12,
   },

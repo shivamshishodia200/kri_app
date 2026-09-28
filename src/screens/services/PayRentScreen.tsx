@@ -22,44 +22,31 @@ import { Button } from '../../components/common/Button';
 import { formatIndianCurrency } from '../../components/common/PriceDisplay';
 import { Icon } from '../../components/common/Icon';
 
+import { PaymentPendingModal } from '../../components/common/PaymentPendingModal';
+
 type Props = NativeStackScreenProps<RootStackParamList, 'PayRent'>;
 
 export const PayRentScreen: React.FC<Props> = ({ navigation }) => {
-  const { rentPayments, payRent } = useBooking();
+  const { rentPayments } = useBooking();
 
   const [propertyTitle, setPropertyTitle] = useState('Luxury 3 BHK Penthouse Indiranagar');
   const [landlordName, setLandlordName] = useState('Vikram Malhotra');
   const [landlordUpi, setLandlordUpi] = useState('vikram.malhotra@okaxis');
   const [rentAmount, setRentAmount] = useState('68000');
   const [maintenanceAmount, setMaintenanceAmount] = useState('4500');
-  const [loading, setLoading] = useState(false);
+  const [showPendingModal, setShowPendingModal] = useState(false);
 
   const rentNum = Number(rentAmount) || 0;
   const maintNum = Number(maintenanceAmount) || 0;
   const convenienceFee = 149;
   const totalPayable = rentNum + maintNum + convenienceFee;
 
-  const handlePayRent = async () => {
+  const handlePayRent = () => {
     if (!landlordName.trim() || !landlordUpi.trim() || rentNum <= 0) {
       Alert.alert('Incomplete Details', 'Please enter valid landlord details and rent amount.');
       return;
     }
-
-    setLoading(true);
-    const receipt = await payRent(
-      propertyTitle,
-      landlordName,
-      landlordUpi,
-      rentNum,
-      maintNum
-    );
-    setLoading(false);
-
-    Alert.alert(
-      'Payment Processed in Demo Mode 🧾',
-      `Rent payment of ${formatIndianCurrency(receipt.totalPaid)} recorded. Valid HRA tax receipt generated (Ref: ${receipt.transactionRef}).`,
-      [{ text: 'Great' }]
-    );
+    setShowPendingModal(true);
   };
 
   return (
@@ -158,7 +145,6 @@ export const PayRentScreen: React.FC<Props> = ({ navigation }) => {
             <Button
               title={`Pay Now • ${formatIndianCurrency(totalPayable)}`}
               onPress={handlePayRent}
-              loading={loading}
               variant="primary"
               size="lg"
               fullWidth
@@ -197,6 +183,15 @@ export const PayRentScreen: React.FC<Props> = ({ navigation }) => {
           ))}
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <PaymentPendingModal
+        visible={showPendingModal}
+        onClose={() => setShowPendingModal(false)}
+        title="Rent Transfer Gateway"
+        featureName="Direct Landlord Rent Payment"
+        amount={totalPayable}
+        description={`Paying ₹${totalPayable.toLocaleString('en-IN')} to ${landlordName} (${landlordUpi}) requires verified Razorpay/UPI gateway rails. Instant transfers and tax receipts will be generated once payment credentials are configured.`}
+      />
     </SafeAreaView>
   );
 };

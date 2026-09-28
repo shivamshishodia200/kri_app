@@ -7,8 +7,14 @@ export type AuthStackParamList = {
   Login: undefined;
   Signup: { defaultRole?: 'buyer' | 'owner' } | undefined;
   ForgotPassword: undefined;
-  OtpVerification: { phoneOrEmail: string; mode: 'signup' | 'reset' };
+  OtpVerification: {
+    phoneOrEmail: string;
+    mode: 'signup' | 'reset';
+    role?: 'buyer' | 'owner';
+    name?: string;
+  };
   TermsAndConditions: undefined;
+  PrivacyPolicy: undefined;
 };
 
 export type MainTabParamList = {
@@ -38,7 +44,9 @@ export type RootStackParamList = {
   BookingConfirmation: { bookingId: string };
   MyBookings: undefined;
   PayRent: { propertyId?: string } | undefined;
+  PayBills: undefined;
   Subscription: undefined;
+
 
   // Communication
   ChatList: undefined;
@@ -50,8 +58,11 @@ export type RootStackParamList = {
   ChangePassword: undefined;
   Settings: undefined;
   PrivacySecurity: undefined;
+  TermsAndConditions: undefined;
+  PrivacyPolicy: undefined;
   HelpFaq: undefined;
   About: undefined;
   ContactUs: undefined;
   Referral: undefined;
 };
+

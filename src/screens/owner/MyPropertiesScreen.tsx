@@ -163,19 +163,28 @@ export const MyPropertiesScreen: React.FC<Props> = ({ route, navigation }) => {
                 }
                 icon={<Icon name="edit" size={14} color={colors.primaryDark} />}
               />
-              {item.status === 'published' ? (
+              {item.status === 'draft' && (
+                <Button
+                  title="Submit for Review"
+                  variant="primary"
+                  size="sm"
+                  onPress={() => handleStatusChange(item, 'under_review')}
+                />
+              )}
+              {item.status === 'under_review' && (
+                <Button
+                  title="Move to Draft"
+                  variant="outline"
+                  size="sm"
+                  onPress={() => handleStatusChange(item, 'draft')}
+                />
+              )}
+              {item.status === 'published' && (
                 <Button
                   title="Mark Rented"
                   variant="outline"
                   size="sm"
                   onPress={() => handleStatusChange(item, 'rented_sold')}
-                />
-              ) : (
-                <Button
-                  title="Publish"
-                  variant="primary"
-                  size="sm"
-                  onPress={() => handleStatusChange(item, 'published')}
                 />
               )}
               <TouchableOpacity

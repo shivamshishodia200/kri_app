@@ -6,6 +6,7 @@ import {
   SafeAreaView,
   Switch,
   ScrollView,
+  TouchableOpacity,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../types/navigation';
@@ -13,6 +14,8 @@ import { colors } from '../../theme/colors';
 import { radii, spacing } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
 import { AppHeader } from '../../components/common/AppHeader';
+import { Icon } from '../../components/common/Icon';
+import { LEGAL_VERSIONS } from '../../data/legalPolicies';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
@@ -84,6 +87,50 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
             />
           </View>
         </View>
+
+        {/* Legal & Policy Links */}
+        <Text style={styles.sectionTitle}>Legal & Compliance</Text>
+        <View style={styles.card}>
+          <TouchableOpacity
+            style={styles.linkRow}
+            onPress={() => navigation.navigate('TermsAndConditions')}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="View Terms and Conditions"
+          >
+            <View style={styles.linkIconCircle}>
+              <Icon name="shield-check" size={16} color={colors.primaryDark} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.linkLabel}>Terms & Conditions</Text>
+              <Text style={styles.linkSub}>Platform terms, zero-brokerage rules & agreement</Text>
+            </View>
+            <View style={styles.badgePill}>
+              <Text style={styles.badgePillText}>v{LEGAL_VERSIONS.termsVersion}</Text>
+            </View>
+            <Icon name="chevron-right" size={14} color="#94A3B8" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.linkRow, { borderBottomWidth: 0 }]}
+            onPress={() => navigation.navigate('PrivacyPolicy')}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="View Privacy Policy"
+          >
+            <View style={styles.linkIconCircle}>
+              <Icon name="lock" size={16} color={colors.primaryDark} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.linkLabel}>Privacy Policy</Text>
+              <Text style={styles.linkSub}>Data security, contact masking & DPDPA rights</Text>
+            </View>
+            <View style={styles.badgePill}>
+              <Text style={styles.badgePillText}>v{LEGAL_VERSIONS.privacyVersion}</Text>
+            </View>
+            <Icon name="chevron-right" size={14} color="#94A3B8" />
+          </TouchableOpacity>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -96,6 +143,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: spacing.xl,
+    paddingBottom: spacing.xxxl,
   },
   sectionTitle: {
     ...typography.subtitle,
@@ -134,4 +182,47 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: 2,
   },
+  linkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: spacing.sm + 4,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+  },
+  linkIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: colors.primarySubtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  linkLabel: {
+    ...typography.subtitle,
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.darkText,
+  },
+  linkSub: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontSize: 11,
+    marginTop: 1,
+  },
+  badgePill: {
+    backgroundColor: colors.primarySubtle,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.primaryLight,
+  },
+  badgePillText: {
+    ...typography.badge,
+    fontSize: 10,
+    color: colors.primaryDark,
+    fontWeight: '800',
+  },
 });
+

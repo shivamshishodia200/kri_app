@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   ViewStyle,
+  Alert,
 } from 'react-native';
 import { colors } from '../../theme/colors';
 import { radii, spacing } from '../../theme/spacing';
@@ -22,6 +23,7 @@ interface PropertyCardHorizontalProps {
   onPress: () => void;
   style?: ViewStyle;
   showStatusBadge?: boolean;
+  onContactPress?: () => void;
 }
 
 export const PropertyCardHorizontal: React.FC<PropertyCardHorizontalProps> = ({
@@ -29,11 +31,23 @@ export const PropertyCardHorizontal: React.FC<PropertyCardHorizontalProps> = ({
   onPress,
   style,
   showStatusBadge = false,
+  onContactPress,
 }) => {
   const { isShortlisted, toggleShortlist } = useProperty();
+  const [favoritePending, setFavoritePending] = useState(false);
+  const [imageFailed, setImageFailed] = useState(false);
   const saved = isShortlisted(property.id);
 
   const mainImage = property.images[0] || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=800&q=80';
+
+  const handleFavoritePress = async (event: { stopPropagation: () => void }) => {
+    event.stopPropagation();
+    if (favoritePending) return;
+    setFavoritePending(true);
+    const savedSuccessfully = await toggleShortlist(property.id);
+    setFavoritePending(false);
+    if (!savedSuccessfully) Alert.alert('Saved properties', 'Could not sync this favorite. Please retry.');
+  };
 
   return (
     <TouchableOpacity
@@ -43,12 +57,21 @@ export const PropertyCardHorizontal: React.FC<PropertyCardHorizontalProps> = ({
     >
       {/* Thumbnail */}
       <View style={styles.imageContainer}>
-        <Image source={{ uri: mainImage }} style={styles.image} resizeMode="cover" />
+        <Image
+          source={{ uri: mainImage }}
+          style={styles.image}
+          resizeMode="cover"
+          onError={() => setImageFailed(true)}
+        />
+        {imageFailed && <View style={styles.imageFallback}><Icon name="building" size={24} color={colors.textSecondary} /></View>}
         <TouchableOpacity
           activeOpacity={0.8}
-          onPress={() => toggleShortlist(property.id)}
-          style={styles.heartButton}
+          onPress={handleFavoritePress}
+          disabled={favoritePending}
+          style={[styles.heartButton, favoritePending && styles.favoritePending]}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel={saved ? 'Remove from saved properties' : 'Save property'}
         >
           <Icon
             name={saved ? 'heart-filled' : 'heart'}
@@ -94,6 +117,20 @@ export const PropertyCardHorizontal: React.FC<PropertyCardHorizontalProps> = ({
           <Text style={styles.specText}>{property.areaSqFt} sqft • </Text>
           <Text style={styles.specText}>{property.furnishing}</Text>
         </View>
+        {onContactPress && (
+          <TouchableOpacity
+            style={styles.contactButton}
+            onPress={(event) => {
+              event.stopPropagation();
+              onContactPress();
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Request property contact access"
+          >
+            <Icon name="lock" size={13} color={colors.darkText} />
+            <Text style={styles.contactText}>Contact</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </TouchableOpacity>
   );
@@ -120,6 +157,12 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
+  imageFallback: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceSubtle,
+  },
   heartButton: {
     position: 'absolute',
     top: 6,
@@ -130,6 +173,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.9)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  favoritePending: {
+    opacity: 0.55,
   },
   detailsContainer: {
     flex: 1,
@@ -170,5 +216,21 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 11,
     fontWeight: '500',
+  },
+  contactButton: {
+    minHeight: 40,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: colors.primary,
+  },
+  contactText: {
+    ...typography.caption,
+    color: colors.darkText,
+    fontWeight: '700',
   },
 });

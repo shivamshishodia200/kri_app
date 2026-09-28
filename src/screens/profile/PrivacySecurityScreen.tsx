@@ -72,6 +72,15 @@ export const PrivacySecurityScreen: React.FC<Props> = ({ navigation }) => {
           />
 
           <Button
+            title="Read Complete Privacy Policy"
+            variant="secondary"
+            size="md"
+            onPress={() => navigation.navigate('PrivacyPolicy')}
+            fullWidth
+            style={{ marginBottom: spacing.md }}
+          />
+
+          <Button
             title="Request Account Deletion"
             variant="danger"
             size="md"
@@ -81,6 +90,7 @@ export const PrivacySecurityScreen: React.FC<Props> = ({ navigation }) => {
             fullWidth
           />
         </View>
+
       </ScrollView>
     </SafeAreaView>
   );

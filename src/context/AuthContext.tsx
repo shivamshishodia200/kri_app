@@ -1,5 +1,11 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
 import { User, UserRole } from '../types/user';
+import {
+  authBackendService,
+  InitiateSignupRequest,
+  BackendAuthResponse,
+} from '../services/authBackendService';
+import { LEGAL_VERSIONS } from '../data/legalPolicies';
 
 interface AuthContextType {
   user: User | null;
@@ -8,28 +14,14 @@ interface AuthContextType {
   setRole: (role: UserRole) => void;
   toggleRole: () => void;
   login: (phoneOrEmail: string, role?: UserRole) => Promise<boolean>;
+  initiateSignup: (req: InitiateSignupRequest) => Promise<BackendAuthResponse>;
+  verifySignupOtp: (phoneOrEmail: string, otp: string) => Promise<BackendAuthResponse>;
+  resendOtp: (phoneOrEmail: string) => Promise<BackendAuthResponse>;
   signup: (name: string, email: string, phone: string, role: UserRole) => Promise<boolean>;
+  acceptPolicyUpdate: (userId: string, marketingOptIn?: boolean) => Promise<boolean>;
   logout: () => void;
   updateProfile: (updates: Partial<User>) => void;
 }
-
-const DEFAULT_USER: User = {
-  id: 'usr-current-user',
-  name: 'Rajesh Sharma',
-  email: 'rajesh.sharma@example.com',
-  phone: '+91 98765 01234',
-  avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
-  role: 'buyer',
-  isVerified: true,
-  city: 'Bangalore',
-  referralCode: 'KIRAYE24RAJ',
-  stats: {
-    propertiesListed: 3,
-    inquiriesReceived: 24,
-    savedProperties: 4,
-    activeBookings: 1,
-  },
-};
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -51,40 +43,73 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const login = async (phoneOrEmail: string, userRole: UserRole = 'buyer'): Promise<boolean> => {
-    // Simulated auth flow
-    const loggedInUser: User = {
-      ...DEFAULT_USER,
-      email: phoneOrEmail.includes('@') ? phoneOrEmail : DEFAULT_USER.email,
-      phone: !phoneOrEmail.includes('@') ? phoneOrEmail : DEFAULT_USER.phone,
-      role: userRole,
-    };
-    setUser(loggedInUser);
-    setRoleState(userRole);
-    setIsAuthenticated(true);
-    return true;
+    const res = await authBackendService.login(phoneOrEmail, userRole);
+    if (res.success && res.user) {
+      setUser(res.user);
+      setRoleState(res.user.role || userRole);
+      setIsAuthenticated(true);
+      return true;
+    }
+    return false;
   };
 
-  const signup = async (name: string, email: string, phone: string, userRole: UserRole): Promise<boolean> => {
-    const newUser: User = {
-      id: `usr-${Date.now()}`,
+  const initiateSignup = async (req: InitiateSignupRequest): Promise<BackendAuthResponse> => {
+    return await authBackendService.initiateSignup(req);
+  };
+
+  const verifySignupOtp = async (phoneOrEmail: string, otp: string): Promise<BackendAuthResponse> => {
+    const res = await authBackendService.verifySignupOtp(phoneOrEmail, otp);
+    if (res.success && res.user) {
+      setUser(res.user);
+      setRoleState(res.user.role);
+      setIsAuthenticated(true);
+    }
+    return res;
+  };
+
+  const resendOtp = async (phoneOrEmail: string): Promise<BackendAuthResponse> => {
+    return await authBackendService.resendOtp(phoneOrEmail);
+  };
+
+  const signup = async (
+    name: string,
+    email: string,
+    phone: string,
+    userRole: UserRole,
+  ): Promise<boolean> => {
+    const res = await initiateSignup({
       name,
       email,
       phone,
       role: userRole,
-      isVerified: false,
-      city: 'Bangalore',
-      referralCode: `KIRAYE${Math.floor(1000 + Math.random() * 9000)}`,
-      stats: {
-        propertiesListed: userRole === 'owner' ? 0 : undefined,
-        inquiriesReceived: 0,
-        savedProperties: 0,
-        activeBookings: 0,
+      consent: {
+        termsAccepted: true,
+        termsVersion: LEGAL_VERSIONS.termsVersion,
+        privacyAccepted: true,
+        privacyVersion: LEGAL_VERSIONS.privacyVersion,
+        marketingOptIn: false,
       },
-    };
-    setUser(newUser);
-    setRoleState(userRole);
-    setIsAuthenticated(true);
-    return true;
+    });
+    return res.success;
+  };
+
+  const acceptPolicyUpdate = async (userId: string, marketingOptIn = false): Promise<boolean> => {
+    const res = await authBackendService.acceptPolicyUpdate(userId, marketingOptIn);
+    if (res.success && user) {
+      setUser({
+        ...user,
+        legalConsent: {
+          termsAccepted: true,
+          termsVersion: LEGAL_VERSIONS.termsVersion,
+          privacyAccepted: true,
+          privacyVersion: LEGAL_VERSIONS.privacyVersion,
+          acceptedAt: new Date().toISOString(),
+          marketingOptIn,
+        },
+      });
+      return true;
+    }
+    return false;
   };
 
   const logout = () => {
@@ -107,7 +132,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setRole,
         toggleRole,
         login,
+        initiateSignup,
+        verifySignupOtp,
+        resendOtp,
         signup,
+        acceptPolicyUpdate,
         logout,
         updateProfile,
       }}
@@ -124,3 +153,4 @@ export const useAuth = (): AuthContextType => {
   }
   return context;
 };
+

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,8 +7,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Alert,
   StatusBar,
+  Pressable,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { AuthStackParamList } from '../../types/navigation';
@@ -21,11 +21,13 @@ import { Button } from '../../components/common/Button';
 import { Icon } from '../../components/common/Icon';
 import { useAuth } from '../../context/AuthContext';
 import { UserRole } from '../../types/user';
+import { LEGAL_VERSIONS } from '../../data/legalPolicies';
+import { submitWithRequiredConsent } from '../../services/consentSubmission';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'Signup'>;
 
 export const SignupScreen: React.FC<Props> = ({ route, navigation }) => {
-  const { signup } = useAuth();
+  const { initiateSignup } = useAuth();
   const defaultRole = route.params?.defaultRole || 'buyer';
 
   const [role, setRole] = useState<UserRole>(defaultRole);
@@ -33,9 +35,16 @@ export const SignupScreen: React.FC<Props> = ({ route, navigation }) => {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
-  const [agreedTerms, setAgreedTerms] = useState(true);
+
+  // Required legal consent (Default MUST BE UNCHECKED per requirements)
+  const [agreedTerms, setAgreedTerms] = useState(false);
+
+  // Optional marketing communication consent
+  const [marketingOptIn, setMarketingOptIn] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const submittingRef = useRef(false);
 
   const validate = () => {
     let valid = true;
@@ -49,7 +58,7 @@ export const SignupScreen: React.FC<Props> = ({ route, navigation }) => {
       newErrors.email = 'Valid email address is required';
       valid = false;
     }
-    if (!phone.trim() || phone.length < 10) {
+    if (!phone.trim() || phone.replace(/\D/g, '').length < 10) {
       newErrors.phone = '10-digit mobile number is required';
       valid = false;
     }
@@ -58,7 +67,8 @@ export const SignupScreen: React.FC<Props> = ({ route, navigation }) => {
       valid = false;
     }
     if (!agreedTerms) {
-      Alert.alert('Terms & Conditions', 'Please accept the Terms & Conditions to create an account.');
+      newErrors.terms =
+        'You must agree to the Terms & Conditions and Privacy Policy to create an account.';
       valid = false;
     }
 
@@ -67,11 +77,60 @@ export const SignupScreen: React.FC<Props> = ({ route, navigation }) => {
   };
 
   const handleSignup = async () => {
+    if (submittingRef.current) return;
     if (!validate()) return;
-    navigation.navigate('OtpVerification', {
-      phoneOrEmail: phone,
-      mode: 'signup',
-    });
+
+    submittingRef.current = true;
+    setLoading(true);
+    setErrors((current) => ({ ...current, submit: '' }));
+    try {
+      const submission = await submitWithRequiredConsent(agreedTerms, () =>
+        initiateSignup({
+          name: name.trim(),
+          email: email.trim(),
+          phone: phone.trim(),
+          password,
+          role,
+          consent: {
+            termsAccepted: true,
+            termsVersion: LEGAL_VERSIONS.termsVersion,
+            privacyAccepted: true,
+            privacyVersion: LEGAL_VERSIONS.privacyVersion,
+            marketingOptIn,
+          },
+        }),
+      );
+
+      if (!submission.accepted) {
+        setErrors((current) => ({
+          ...current,
+          terms: 'You must agree to the Terms & Conditions and Privacy Policy to create an account.',
+        }));
+        return;
+      }
+
+      if (submission.result.success) {
+        navigation.navigate('OtpVerification', {
+          phoneOrEmail: phone.trim(),
+          mode: 'signup',
+          role,
+          name: name.trim(),
+        });
+      } else {
+        setErrors((current) => ({
+          ...current,
+          submit: submission.result.error || 'Failed to initiate signup. Please check your details.',
+        }));
+      }
+    } catch {
+      setErrors((current) => ({
+        ...current,
+        submit: 'Unable to reach the Kirayedar24 server. Please check your connection and retry.',
+      }));
+    } finally {
+      submittingRef.current = false;
+      setLoading(false);
+    }
   };
 
   return (
@@ -118,6 +177,9 @@ export const SignupScreen: React.FC<Props> = ({ route, navigation }) => {
                   activeOpacity={0.85}
                   onPress={() => setRole('buyer')}
                   style={[styles.roleTab, role === 'buyer' && styles.roleTabActive]}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: role === 'buyer' }}
+                  accessibilityLabel="Register as Buyer or Tenant"
                 >
                   <Icon
                     name="home"
@@ -133,6 +195,9 @@ export const SignupScreen: React.FC<Props> = ({ route, navigation }) => {
                   activeOpacity={0.85}
                   onPress={() => setRole('owner')}
                   style={[styles.roleTab, role === 'owner' && styles.roleTabActive]}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: role === 'owner' }}
+                  accessibilityLabel="Register as Owner or Landlord"
                 >
                   <Icon
                     name="building"
@@ -203,34 +268,111 @@ export const SignupScreen: React.FC<Props> = ({ route, navigation }) => {
               leftIcon={<Icon name="lock" size={18} color={colors.textSecondary} />}
             />
 
-            {/* Terms Agreement */}
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => setAgreedTerms(!agreedTerms)}
-              style={styles.termsRow}
-            >
-              <View style={[styles.checkbox, agreedTerms && styles.checkboxActive]}>
-                {agreedTerms && <Icon name="check" size={13} color="#0F172A" strokeWidth={3} />}
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.termsText}>
-                  I agree to the{' '}
-                  <Text
-                    style={styles.termsLink}
-                    onPress={() => navigation.navigate('TermsAndConditions')}
+            {/* Legal Consent Section */}
+            <View style={styles.consentContainer}>
+              {/* Mandatory Terms & Privacy Checkbox */}
+              <View
+                style={[
+                  styles.consentItemBox,
+                  Boolean(errors.terms) && styles.consentItemBoxError,
+                ]}
+              >
+                <Pressable
+                  onPress={() => {
+                    setAgreedTerms((current) => !current);
+                    if (errors.terms) setErrors((current) => ({ ...current, terms: '' }));
+                  }}
+                  style={styles.checkboxTouchTarget}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: agreedTerms }}
+                  accessibilityLabel="I agree to the Terms and Conditions and Privacy Policy"
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <View
+                    style={[
+                      styles.checkbox,
+                      agreedTerms && styles.checkboxActive,
+                      Boolean(errors.terms) && !agreedTerms && styles.checkboxError,
+                    ]}
                   >
-                    Terms & Conditions
-                  </Text>{' '}
-                  and Privacy Policy of Kirayedar24.
-                </Text>
+                    {agreedTerms && <Icon name="check" size={13} color="#0F172A" strokeWidth={3} />}
+                  </View>
+                </Pressable>
+
+
+                <View style={styles.consentTextWrapper}>
+                  <View style={styles.termsCopy}>
+                    <Text style={styles.termsText}>I agree to the </Text>
+                    <TouchableOpacity
+                      style={styles.policyLinkTarget}
+                      onPress={() => navigation.navigate('TermsAndConditions')}
+                      accessibilityRole="link"
+                      accessibilityLabel="Read Terms and Conditions"
+                    >
+                      <Text style={styles.termsLink}>Terms & Conditions</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.termsText}> and </Text>
+                    <TouchableOpacity
+                      style={styles.policyLinkTarget}
+                      onPress={() => navigation.navigate('PrivacyPolicy')}
+                      accessibilityRole="link"
+                      accessibilityLabel="Read Privacy Policy"
+                    >
+                      <Text style={styles.termsLink}>Privacy Policy</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.termsText}> of Kirayedar24.</Text>
+                  </View>
+                </View>
               </View>
-            </TouchableOpacity>
+
+              {/* Inline Validation Error */}
+              {Boolean(errors.terms) && (
+                <View style={styles.inlineErrorRow}>
+                  <Icon name="alert-circle" size={14} color={colors.danger} />
+                  <Text style={styles.inlineErrorText} accessibilityRole="alert">
+                    {errors.terms}
+                  </Text>
+                </View>
+              )}
+
+              {Boolean(errors.submit) && (
+                <Text style={styles.inlineErrorText} accessibilityRole="alert">
+                  {errors.submit}
+                </Text>
+              )}
+
+              {/* Optional Marketing Opt-In Checkbox */}
+              <View style={styles.marketingItemBox}>
+                <Pressable
+                  onPress={() => setMarketingOptIn(!marketingOptIn)}
+                  style={styles.checkboxTouchTarget}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: marketingOptIn }}
+                  accessibilityLabel="Send me product updates and offers (Optional)"
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <View style={[styles.checkbox, marketingOptIn && styles.checkboxActive]}>
+                    {marketingOptIn && (
+                      <Icon name="check" size={13} color="#0F172A" strokeWidth={3} />
+                    )}
+                  </View>
+                </Pressable>
+
+                <View style={styles.consentTextWrapper}>
+                  <Text style={styles.marketingText}>
+                    Send me product updates, property alerts, and exclusive rental offers.{' '}
+                    <Text style={styles.optionalPill}>(Optional)</Text>
+                  </Text>
+                </View>
+              </View>
+            </View>
 
             {/* Submit Button */}
             <Button
-              title="Continue to Verify OTP"
+              title="Create Account"
               onPress={handleSignup}
               loading={loading}
+              disabled={loading}
               variant="primary"
               size="lg"
               fullWidth
@@ -386,40 +528,113 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontWeight: '800',
   },
-  termsRow: {
+  consentContainer: {
+    marginVertical: 12,
+    gap: 8,
+  },
+  consentItemBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    marginVertical: 14,
-    gap: 10,
+    backgroundColor: '#F8FAFC',
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  consentItemBoxError: {
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEF2F2',
+  },
+  marketingItemBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#FFFFFF',
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+  },
+  checkboxTouchTarget: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 4,
+    marginTop: -8,
   },
   checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 5,
+    width: 22,
+    height: 22,
+    borderRadius: 6,
     borderWidth: 1.5,
     borderColor: '#CBD5E1',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 2,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
   },
   checkboxActive: {
     backgroundColor: colors.primary,
     borderColor: colors.primaryDark,
   },
+  checkboxError: {
+    borderColor: colors.danger,
+    backgroundColor: '#FFF5F5',
+  },
+  consentTextWrapper: {
+    flex: 1,
+    paddingTop: 2,
+  },
+  termsCopy: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+  },
   termsText: {
     ...typography.caption,
     fontSize: 12,
-    color: '#64748B',
+    color: '#334155',
     lineHeight: 18,
+    fontWeight: '500',
   },
   termsLink: {
     color: colors.primaryDark,
     fontWeight: '700',
     textDecorationLine: 'underline',
   },
+  policyLinkTarget: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  inlineErrorRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    paddingHorizontal: 4,
+    marginTop: -2,
+    marginBottom: 4,
+  },
+  inlineErrorText: {
+    ...typography.caption,
+    color: colors.danger,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+    flex: 1,
+  },
+  marketingText: {
+    ...typography.caption,
+    fontSize: 12,
+    color: '#64748B',
+    lineHeight: 17,
+  },
+  optionalPill: {
+    color: '#94A3B8',
+    fontSize: 11,
+    fontWeight: '600',
+  },
   submitButton: {
-    marginTop: 6,
+    marginTop: 10,
     marginBottom: 16,
     borderRadius: 12,
   },
@@ -455,3 +670,4 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 });
+

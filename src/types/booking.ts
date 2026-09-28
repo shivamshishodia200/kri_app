@@ -66,6 +66,7 @@ export interface SubscriptionPlan {
   price: number;
   billingPeriod: 'monthly' | 'quarterly' | 'annually';
   listingLimit: number;
+  expiresAt?: string;
   isPopular?: boolean;
   features: string[];
 }

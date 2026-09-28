@@ -18,10 +18,7 @@ export const AppLogo: React.FC<AppLogoProps> = ({
   resizeMode = 'contain',
   variant = 'light',
 }) => {
-  const source =
-    variant === 'dark'
-      ? require('../../assets/kri_logo_dark.png')
-      : require('../../assets/kri_logo.png');
+  const source = require('../../assets/deliverypluslogo.png');
 
   return (
     <View style={[styles.container, { width, height }, style]}>

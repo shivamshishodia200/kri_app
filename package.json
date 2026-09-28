@@ -8,8 +8,11 @@
     "start": "react-native start",
     "test": "jest",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:home": "tsc --outDir ./dist_home src/tests/test_home_flow.ts src/services/propertyService.ts src/services/subscriptionService.ts src/mock/propertiesData.ts src/types/property.ts src/types/booking.ts --module commonjs --target es2020 --esModuleInterop --skipLibCheck && node ./dist_home/tests/test_home_flow.js && rm -rf ./dist_home",
+    "test:consent": "tsc --outDir ./dist_test src/tests/test_consent_flow.ts src/services/*.ts src/data/*.ts src/types/*.ts --module commonjs --target es2020 --esModuleInterop --skipLibCheck && node ./dist_test/tests/test_consent_flow.js && rm -rf ./dist_test"
   },
+
   "dependencies": {
     "@react-navigation/bottom-tabs": "^6.5.20",
     "@react-navigation/native": "^6.1.17",

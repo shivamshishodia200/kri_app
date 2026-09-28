@@ -4,13 +4,14 @@ import {
   Text,
   ScrollView,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
   StatusBar,
   Dimensions,
   Modal,
-  FlatList,
   Platform,
+  RefreshControl,
+  Image,
+  Linking,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -18,17 +19,48 @@ import { RootStackParamList } from '../../types/navigation';
 import { colors } from '../../theme/colors';
 import { radii, spacing } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
+import { shadows } from '../../theme/shadows';
 import { useAuth } from '../../context/AuthContext';
 import { useProperty } from '../../context/PropertyContext';
 import { useNotification } from '../../context/NotificationContext';
+import { useChat } from '../../context/ChatContext';
 import { SectionHeading } from '../../components/common/SectionHeading';
 import { PropertyCardVertical } from '../../components/property/PropertyCardVertical';
 import { PropertyCardHorizontal } from '../../components/property/PropertyCardHorizontal';
 import { RoleSwitchBanner } from '../../components/common/RoleSwitchBanner';
 import { AppLogo } from '../../components/common/AppLogo';
+import { HomeDrawer } from '../../components/common/HomeDrawer';
+import { HomePromoCarousel, HomePromo } from '../../components/common/HomePromoCarousel';
+import { ContactUnlockModal } from '../../components/common/ContactUnlockModal';
 import { Icon } from '../../components/common/Icon';
+import { Property, PropertyType } from '../../types/property';
+import { propertyService } from '../../services/propertyService';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+const BUYER_HOME_PROMOS: HomePromo[] = [
+  {
+    eyebrow: 'SAMPLE LISTINGS',
+    title: 'Find a place that fits',
+    description: 'Browse demo homes by locality. Live owner verification is not connected.',
+    actionLabel: 'Browse rentals',
+    icon: 'home',
+  },
+  {
+    eyebrow: 'RENT TOOLS',
+    title: 'Keep rent organised',
+    description: 'Open the rent workspace for demo receipts and payment details.',
+    actionLabel: 'Open rent tools',
+    icon: 'credit-card',
+  },
+  {
+    eyebrow: 'WORK & RETAIL',
+    title: 'Explore commercial spaces',
+    description: 'See sample offices, shops and commercial properties in one place.',
+    actionLabel: 'View commercial',
+    icon: 'briefcase',
+  },
+];
 
 const CITIES = [
   { name: 'Bangalore', state: 'Karnataka', popular: true },
@@ -42,88 +74,143 @@ const CITIES = [
 ];
 
 const LOCALITIES: Record<string, string[]> = {
-  Bangalore: ['Koramangala', 'HSR Layout', 'Indiranagar', 'Whitefield', 'Bellandur', 'Electronic City'],
+  Bangalore: ['Indiranagar', 'HSR Layout', 'Koramangala', 'Whitefield', 'Bellandur', 'Jayanagar', 'Sarjapur Road'],
   Mumbai: ['Bandra West', 'Andheri West', 'Powai', 'Juhu', 'Worli', 'Thane West'],
-  'Delhi NCR': ['Cyber City', 'Golf Course Rd', 'South Extension', 'Noida Sector 62', 'Vasant Kunj'],
+  'Delhi NCR': ['Golf Course Rd', 'Cyber City', 'South Extension', 'Noida Sector 62', 'Vasant Kunj'],
   Pune: ['Koregaon Park', 'Kalyani Nagar', 'Baner', 'Viman Nagar', 'Hinjewadi'],
   Hyderabad: ['Hitec City', 'Gachibowli', 'Jubilee Hills', 'Banjara Hills', 'Madhapur'],
   Chennai: ['OMR', 'Adyar', 'Anna Nagar', 'Velachery', 'Besant Nagar'],
+  Kolkata: ['Salt Lake', 'New Town', 'Ballygunge', 'Alipore'],
+  Ahmedabad: ['SG Highway', 'Bodakdev', 'Satellite', 'Prahlad Nagar'],
 };
 
 export const BuyerHomeScreen: React.FC = () => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { user } = useAuth();
-  const { properties, selectedCity, setSelectedCity, setFilter } = useProperty();
-  const { unreadCount } = useNotification();
+  const { user, role } = useAuth();
+  const {
+    properties,
+    shortlistedIds,
+    shortlistedProperties,
+    selectedCity,
+    setSelectedCity,
+    setSelectedLocality,
+    setFilter,
+    isRefreshing,
+    refreshProperties,
+    getCategoryCount,
+  } = useProperty();
+  const { unreadCount: notificationUnread } = useNotification();
+  const { unreadCount: chatUnread } = useChat();
 
   const [cityModalVisible, setCityModalVisible] = useState(false);
-  const [activeTab, setActiveTab] = useState<'rent' | 'buy' | 'commercial'>('rent');
-
-  const featuredProperties = properties.filter((p) => p.isFeatured);
-  const rentalProperties = properties.filter((p) => p.listingType === 'rent');
-  const buyProperties = properties.filter((p) => p.listingType === 'buy');
+  const [drawerVisible, setDrawerVisible] = useState(false);
+  const [contactProperty, setContactProperty] = useState<Property | null>(null);
+  const [activeFilterChip, setActiveFilterChip] = useState<'all' | 'rent' | 'buy' | 'commercial' | 'new'>('all');
 
   const currentLocalities = LOCALITIES[selectedCity] || LOCALITIES['Bangalore'];
 
-  const handleQuickCategory = (type: 'rent' | 'buy', category: 'residential' | 'commercial' = 'residential') => {
-    setActiveTab(type === 'buy' ? 'buy' : category === 'commercial' ? 'commercial' : 'rent');
-    setFilter((prev) => ({
-      ...prev,
+  // Categorized Property Subsets
+  const featuredProperties = properties.filter((p) => p.isFeatured && p.status === 'published');
+  const rentalProperties = properties.filter((p) => p.listingType === 'rent' && p.status === 'published');
+  const buyProperties = properties.filter((p) => p.listingType === 'buy' && p.status === 'published');
+  const newProperties = [...properties]
+    .filter((p) => p.status === 'published')
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const residentialProperties = properties.filter(
+    (property) => property.status === 'published' && property.category === 'residential'
+  );
+  const commercialProperties = properties.filter(
+    (property) => property.status === 'published' && property.category === 'commercial'
+  );
+
+  const handlePropertyContact = async (property: Property) => {
+    const entitlement = await propertyService.checkContactEntitlement(property.id);
+    if (!entitlement.allowed) {
+      setContactProperty(property);
+      return;
+    }
+    try {
+      await Linking.openURL(`tel:${entitlement.phone}`);
+    } catch {
+      setContactProperty(property);
+    }
+  };
+
+  // Quick category navigation
+  const handleQuickCategory = (type?: 'rent' | 'buy', category?: 'residential' | 'commercial', propertyType?: PropertyType) => {
+    setFilter({
       listingType: type,
       category,
-    }));
+      propertyTypes: propertyType ? [propertyType] : undefined,
+      city: selectedCity,
+    });
     navigation.navigate('SearchListings', {
-      initialFilter: { listingType: type, category },
+      initialFilter: {
+        listingType: type,
+        category,
+        propertyTypes: propertyType ? [propertyType] : undefined,
+        city: selectedCity,
+      },
     });
   };
 
-  const handleLocalityPress = (locality: string) => {
-    setFilter((prev) => ({
-      ...prev,
-      query: locality,
-      city: selectedCity,
-    }));
-    navigation.navigate('SearchListings', {
-      initialFilter: { query: locality, city: selectedCity },
-    });
+  const handleCitySelect = (cityName: string) => {
+    setSelectedCity(cityName);
+    setSelectedLocality(null);
+    setCityModalVisible(false);
   };
 
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0B0F19" />
 
-      {/* Top Luxury Midnight Header */}
+      {/* Top Luxury Dark Header */}
       <View style={styles.header}>
         <View style={styles.headerTopRow}>
           {/* Brand Logo */}
-          <AppLogo width={140} height={55} variant="light" style={styles.logoStyle} />
+            <AppLogo width={Math.min(140, SCREEN_WIDTH * 0.35)} height={48} variant="light" style={styles.logoStyle} />
 
-          {/* Location & Notification Controls */}
+          {/* Controls: Location, Chat, Notifications */}
           <View style={styles.headerControls}>
-            {/* City Selector Pill */}
             <TouchableOpacity
               activeOpacity={0.8}
-              onPress={() => setCityModalVisible(true)}
-              style={styles.locationPill}
+              onPress={() => setDrawerVisible(true)}
+              style={styles.headerIconButton}
+              accessibilityRole="button"
+              accessibilityLabel="Open navigation menu"
             >
-              <Icon name="map-pin" size={13} color={colors.primary} />
-              <Text style={styles.cityNameText} numberOfLines={1}>
-                {selectedCity}
-              </Text>
-              <Icon name="chevron-down" size={11} color="#94A3B8" />
+              <Icon name="list" size={19} color="#FFFFFF" />
+            </TouchableOpacity>
+
+            {/* Chat Shortcut */}
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => navigation.navigate('ChatList')}
+              style={styles.headerIconButton}
+              accessibilityRole="button"
+              accessibilityLabel={`Chat with owners. ${chatUnread} unread messages.`}
+            >
+              <Icon name="chat" size={18} color="#FFFFFF" />
+              {chatUnread > 0 && (
+                <View style={styles.badgeCount}>
+                  <Text style={styles.badgeText}>{chatUnread > 9 ? '9+' : chatUnread}</Text>
+                </View>
+              )}
             </TouchableOpacity>
 
             {/* Notification Bell */}
             <TouchableOpacity
               activeOpacity={0.8}
               onPress={() => navigation.navigate('NotificationList')}
-              style={styles.notificationButton}
+              style={styles.headerIconButton}
+              accessibilityRole="button"
+              accessibilityLabel={`Notifications. ${notificationUnread} unread.`}
             >
-              <Icon name="bell" size={19} color="#FFFFFF" />
-              {unreadCount > 0 && (
-                <View style={styles.notificationBadge}>
-                  <Text style={styles.notificationBadgeText}>
-                    {unreadCount > 9 ? '9+' : unreadCount}
+              <Icon name="bell" size={18} color="#FFFFFF" />
+              {notificationUnread > 0 && (
+                <View style={styles.badgeCount}>
+                  <Text style={styles.badgeText}>
+                    {notificationUnread > 9 ? '9+' : notificationUnread}
                   </Text>
                 </View>
               )}
@@ -131,13 +218,26 @@ export const BuyerHomeScreen: React.FC = () => {
           </View>
         </View>
 
-        {/* User Greeting and Slogan */}
+        {/* User Greeting */}
         <View style={styles.greetingContainer}>
-          <Text style={styles.greetingTitle}>
-            Hi, {user?.name ? user.name.split(' ')[0] : 'Resident'} 👋
-          </Text>
+          <View style={styles.greetingTopRow}>
+            <Text style={styles.greetingTitle} numberOfLines={1}>
+              Hi, {user?.name ? user.name.split(' ')[0] : 'Resident'}
+            </Text>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => setCityModalVisible(true)}
+              style={styles.locationPill}
+              accessibilityRole="button"
+              accessibilityLabel={`Current city: ${selectedCity}. Tap to change city.`}
+            >
+              <Icon name="map-pin" size={13} color={colors.primary} />
+              <Text style={styles.cityNameText} numberOfLines={1}>{selectedCity}</Text>
+              <Icon name="chevron-down" size={11} color="#94A3B8" />
+            </TouchableOpacity>
+          </View>
           <Text style={styles.greetingSubtitle}>
-            Explore 100% verified homes with zero brokerage fees
+            Find 100% verified homes with zero brokerage fees
           </Text>
         </View>
 
@@ -146,13 +246,17 @@ export const BuyerHomeScreen: React.FC = () => {
           activeOpacity={0.9}
           onPress={() => navigation.navigate('SearchListings', { focusSearch: true })}
           style={styles.heroSearchBar}
+          accessibilityRole="search"
+          accessibilityLabel="Search by location, property name, or keyword"
         >
           <View style={styles.searchLeft}>
             <View style={styles.searchIconWrapper}>
-              <Icon name="search" size={17} color={colors.primary} />
+              <Icon name="search" size={16} color={colors.primaryDark} />
             </View>
             <View style={styles.searchPlaceholderBox}>
-              <Text style={styles.searchMainPlaceholder}>Search localities, apartments...</Text>
+              <Text style={styles.searchMainPlaceholder}>
+                Search location, property or landmark
+              </Text>
               <Text style={styles.searchSubPlaceholder}>
                 e.g. {currentLocalities[0]}, {currentLocalities[1]}
               </Text>
@@ -160,231 +264,124 @@ export const BuyerHomeScreen: React.FC = () => {
           </View>
 
           <View style={styles.filterButton}>
-            <Icon name="filter" size={16} color="#0F172A" />
+            <Icon name="filter" size={15} color="#0F172A" />
           </View>
         </TouchableOpacity>
 
-        {/* Category Tabs: Rent | Buy | Commercial */}
-        <View style={styles.tabSwitcher}>
-          <TouchableOpacity
-            style={[styles.tabButton, activeTab === 'rent' && styles.tabButtonActive]}
-            onPress={() => handleQuickCategory('rent', 'residential')}
-            activeOpacity={0.8}
-          >
-            <Icon
-              name="home"
-              size={14}
-              color={activeTab === 'rent' ? '#0F172A' : '#94A3B8'}
-            />
-            <Text style={[styles.tabText, activeTab === 'rent' && styles.tabTextActive]}>
-              Rent Homes
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.tabButton, activeTab === 'buy' && styles.tabButtonActive]}
-            onPress={() => handleQuickCategory('buy', 'residential')}
-            activeOpacity={0.8}
-          >
-            <Icon
-              name="building"
-              size={14}
-              color={activeTab === 'buy' ? '#0F172A' : '#94A3B8'}
-            />
-            <Text style={[styles.tabText, activeTab === 'buy' && styles.tabTextActive]}>
-              Buy Property
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.tabButton, activeTab === 'commercial' && styles.tabButtonActive]}
-            onPress={() => handleQuickCategory('rent', 'commercial')}
-            activeOpacity={0.8}
-          >
-            <Icon
-              name="briefcase"
-              size={14}
-              color={activeTab === 'commercial' ? '#0F172A' : '#94A3B8'}
-            />
-            <Text style={[styles.tabText, activeTab === 'commercial' && styles.tabTextActive]}>
-              Commercial
-            </Text>
-          </TouchableOpacity>
-        </View>
+        {/* Quick Filter Chips: All | Rent | Buy | Commercial | New */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.quickChipsRow}
+        >
+          {[
+            { id: 'all', label: 'All Listings', icon: 'grid', action: () => { setActiveFilterChip('all'); handleQuickCategory(); } },
+            { id: 'rent', label: 'Rent Homes', icon: 'home', action: () => { setActiveFilterChip('rent'); handleQuickCategory('rent', 'residential'); } },
+            { id: 'buy', label: 'Buy Property', icon: 'building', action: () => { setActiveFilterChip('buy'); handleQuickCategory('buy', 'residential'); } },
+            { id: 'commercial', label: 'Commercial', icon: 'briefcase', action: () => { setActiveFilterChip('commercial'); handleQuickCategory(undefined, 'commercial'); } },
+            { id: 'new', label: 'New Launch', icon: 'sparkles', action: () => { setActiveFilterChip('new'); setFilter(p => ({ ...p, sortBy: 'newest' })); navigation.navigate('SearchListings'); } },
+          ].map((chip) => {
+            const active = activeFilterChip === chip.id;
+            return (
+              <TouchableOpacity
+                key={chip.id}
+                style={[styles.quickChip, active && styles.quickChipActive]}
+                onPress={chip.action}
+                activeOpacity={0.8}
+              >
+                <Icon
+                  name={chip.icon as any}
+                  size={12}
+                  color={active ? '#0F172A' : '#CBD5E1'}
+                />
+                <Text style={[styles.quickChipText, active && styles.quickChipTextActive]}>
+                  {chip.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
       </View>
 
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={refreshProperties}
+            tintColor={colors.primary}
+            colors={[colors.primaryDark]}
+          />
+        }
       >
         {/* Role Switch Banner */}
         <View style={styles.bannerWrapper}>
           <RoleSwitchBanner />
         </View>
 
-        {/* Quick Action Services Matrix */}
-        <View style={styles.sectionContainer}>
-          <View style={styles.sectionHeaderSimple}>
-            <Text style={styles.sectionTitleBold}>Realty Services</Text>
-            <TouchableOpacity onPress={() => navigation.navigate('ServicesCatalog')}>
-              <Text style={styles.seeAllText}>View All</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.quickServicesGrid}>
-            {[
-              {
-                id: 'rent-pay',
-                title: 'Pay Rent',
-                subtitle: 'Cashback',
-                icon: 'credit-card',
-                badge: '1.5% Off',
-                bgColor: '#FEF3F2',
-                iconColor: '#D92D20',
-                action: () => navigation.navigate('PayRent'),
-              },
-              {
-                id: 'packers',
-                title: 'Packers',
-                subtitle: 'Safe Shifting',
-                icon: 'truck',
-                badge: 'Verified',
-                bgColor: '#EFF8FF',
-                iconColor: '#175CD3',
-                action: () => navigation.navigate('ServicesCatalog'),
-              },
-              {
-                id: 'agreements',
-                title: 'Agreement',
-                subtitle: 'Legal Stamp',
-                icon: 'shield-check',
-                badge: 'Instant',
-                bgColor: '#ECFDF3',
-                iconColor: '#027A48',
-                action: () => navigation.navigate('ServicesCatalog'),
-              },
-              {
-                id: 'cleaning',
-                title: 'Cleaning',
-                subtitle: 'Deep Clean',
-                icon: 'sparkles',
-                badge: 'Popular',
-                bgColor: '#FDF4FF',
-                iconColor: '#C11574',
-                action: () => navigation.navigate('ServicesCatalog'),
-              },
-            ].map((service) => (
-              <TouchableOpacity
-                key={service.id}
-                style={styles.serviceItemCard}
-                onPress={service.action}
-                activeOpacity={0.8}
-              >
-                {service.badge && (
-                  <View style={styles.serviceBadge}>
-                    <Text style={styles.serviceBadgeText}>{service.badge}</Text>
-                  </View>
-                )}
-                <View style={[styles.serviceIconCircle, { backgroundColor: service.bgColor }]}>
-                  <Icon name={service.icon as any} size={22} color={service.iconColor} />
-                </View>
-                <Text style={styles.serviceTitle}>{service.title}</Text>
-                <Text style={styles.serviceSubtitle}>{service.subtitle}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+        {/* Auto-rotating demo discovery and service promos */}
+        <View style={styles.campaignBannerContainer}>
+          <HomePromoCarousel
+            promos={BUYER_HOME_PROMOS}
+            onAction={(index) => {
+              if (index === 0) handleQuickCategory('rent', 'residential');
+              else if (index === 1) navigation.navigate('PayRent');
+              else handleQuickCategory(undefined, 'commercial');
+            }}
+          />
         </View>
 
-        {/* Dynamic Highlight Promo Banners Carousel */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.promoCarouselContainer}
-          snapToInterval={SCREEN_WIDTH * 0.88 + 12}
-          decelerationRate="fast"
-        >
-          {/* Promo Card 1: Zero Brokerage Guarantee */}
-          <TouchableOpacity
-            activeOpacity={0.9}
-            style={[styles.promoCard, { backgroundColor: '#111827' }]}
-            onPress={() => handleQuickCategory('rent')}
-          >
-            <View style={styles.promoContent}>
-              <View style={styles.promoChip}>
-                <Icon name="shield-check" size={11} color={colors.primary} />
-                <Text style={styles.promoChipText}>100% DIRECT OWNER</Text>
-              </View>
-              <Text style={styles.promoHeading}>0% Brokerage Guarantee</Text>
-              <Text style={styles.promoDesc}>
-                Connect directly with property owners and save up to ₹50,000 on agent fees.
-              </Text>
-              <View style={styles.promoActionButton}>
-                <Text style={styles.promoActionText}>Explore Verified Homes</Text>
-                <Icon name="arrow-right" size={13} color="#0F172A" />
-              </View>
-            </View>
-            <View style={styles.promoDecorativeIcon}>
-              <Icon name="home" size={54} color="rgba(253, 176, 34, 0.15)" />
-            </View>
-          </TouchableOpacity>
-
-          {/* Promo Card 2: Rent Pay on Credit Card */}
-          <TouchableOpacity
-            activeOpacity={0.9}
-            style={[styles.promoCard, { backgroundColor: '#1E1B4B' }]}
-            onPress={() => navigation.navigate('PayRent')}
-          >
-            <View style={styles.promoContent}>
-              <View style={[styles.promoChip, { borderColor: '#818CF8' }]}>
-                <Icon name="sparkles" size={11} color="#A5B4FC" />
-                <Text style={[styles.promoChipText, { color: '#C7D2FE' }]}>REWARDS PROGRAM</Text>
-              </View>
-              <Text style={styles.promoHeading}>Pay Rent via Credit Card</Text>
-              <Text style={styles.promoDesc}>
-                Get 45 days interest-free credit and earn up to 2% cashback with instant rent receipt.
-              </Text>
-              <View style={[styles.promoActionButton, { backgroundColor: '#818CF8' }]}>
-                <Text style={[styles.promoActionText, { color: '#FFFFFF' }]}>Pay Rent Now</Text>
-                <Icon name="arrow-right" size={13} color="#FFFFFF" />
-              </View>
-            </View>
-            <View style={styles.promoDecorativeIcon}>
-              <Icon name="credit-card" size={54} color="rgba(129, 140, 248, 0.2)" />
-            </View>
-          </TouchableOpacity>
-        </ScrollView>
-
-        {/* Popular Localities Chips */}
+        {/* Property Categories Grid */}
         <View style={styles.sectionContainer}>
           <SectionHeading
-            title={`Top Localities in ${selectedCity}`}
-            subtitle="Explore highest demand rental and investment hubs"
+            title="Browse by Property Type"
+            subtitle="Apartments, standalone villas, plots and commercial spaces"
           />
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.localityScroll}
+            contentContainerStyle={styles.categoriesCarousel}
+            decelerationRate="fast"
           >
-            {currentLocalities.map((loc, idx) => (
+            {[
+              { id: 'apt', name: 'Apartments', type: 'Apartment' as PropertyType, icon: 'building', count: getCategoryCount('Apartment') },
+              { id: 'villa', name: 'Villas & Houses', type: 'Villa' as PropertyType, icon: 'home', count: getCategoryCount('Villa') },
+              { id: 'ind', name: 'Indep. Houses', type: 'Independent House' as PropertyType, icon: 'home', count: getCategoryCount('Independent House') },
+              { id: 'comm', name: 'Office Spaces', type: 'Office Space' as PropertyType, icon: 'briefcase', count: getCategoryCount('Office Space') },
+              { id: 'shop', name: 'Shops / Retail', type: 'Shop / Showroom' as PropertyType, icon: 'building', count: getCategoryCount('Shop / Showroom') },
+              { id: 'plot', name: 'Plots / Land', type: 'Plot / Land' as PropertyType, icon: 'square-area', count: getCategoryCount('Plot / Land') },
+            ].map((cat, index) => (
               <TouchableOpacity
-                key={idx}
-                style={styles.localityChip}
-                onPress={() => handleLocalityPress(loc)}
-                activeOpacity={0.7}
+                key={cat.id}
+                style={styles.categoryCard}
+                onPress={() => handleQuickCategory(undefined, undefined, cat.type)}
+                activeOpacity={0.82}
+                accessibilityRole="button"
+                accessibilityLabel={`${cat.name}, ${cat.count} listings. Browse category.`}
               >
-                <Icon name="map-pin" size={13} color={colors.primaryDark} />
-                <Text style={styles.localityChipText}>{loc}</Text>
+                <View style={styles.categoryCardTop}>
+                  <View style={styles.categoryIconCircle}>
+                    <Icon name={cat.icon as any} size={20} color={colors.primaryDark} />
+                  </View>
+                  <Text style={styles.categoryIndex}>{String(index + 1).padStart(2, '0')}</Text>
+                </View>
+                <Text style={styles.categoryTitle} numberOfLines={2}>{cat.name}</Text>
+                <View style={styles.categoryCardBottom}>
+                  <Text style={styles.categoryCount}>{cat.count} listings</Text>
+                  <Icon name="arrow-right" size={15} color={colors.primaryDark} />
+                </View>
               </TouchableOpacity>
             ))}
           </ScrollView>
         </View>
 
-        {/* Featured Properties Horizontal Carousel */}
+        {/* Featured Properties Carousel */}
         <View style={styles.sectionContainer}>
           <SectionHeading
             title="Featured Properties"
-            subtitle="Handpicked premium residences with video tours"
-            onSeeAll={() => navigation.navigate('SearchListings')}
+            subtitle="Handpicked verified residences with photo audits"
+            onSeeAll={() => handleQuickCategory()}
           />
           <ScrollView
             horizontal
@@ -402,23 +399,66 @@ export const BuyerHomeScreen: React.FC = () => {
                     property: prop,
                   })
                 }
+                onContactPress={() => handlePropertyContact(prop)}
                 style={{ marginRight: spacing.md }}
               />
             ))}
           </ScrollView>
         </View>
 
+        <View style={styles.sectionContainer}>
+          <SectionHeading
+            title="Residential properties"
+            subtitle="Sample homes available to rent or buy"
+            onSeeAll={() => handleQuickCategory(undefined, 'residential')}
+          />
+          {residentialProperties.length > 0 ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalPropertiesList}>
+              {residentialProperties.slice(0, 6).map((property) => (
+                <PropertyCardVertical
+                  key={`residential-${property.id}`}
+                  property={property}
+                  cardWidth={SCREEN_WIDTH * 0.76}
+                  onPress={() => navigation.navigate('PropertyDetail', { propertyId: property.id, property })}
+                  onContactPress={() => handlePropertyContact(property)}
+                  style={{ marginRight: spacing.md }}
+                />
+              ))}
+            </ScrollView>
+          ) : <Text style={styles.emptyCategoryText}>No sample residential listings are available.</Text>}
+        </View>
+
+        <View style={styles.sectionContainer}>
+          <SectionHeading
+            title="Commercial properties"
+            subtitle="Sample offices, shops and workspaces"
+            onSeeAll={() => handleQuickCategory(undefined, 'commercial')}
+          />
+          {commercialProperties.length > 0 ? (
+            <View style={styles.verticalListContainer}>
+              {commercialProperties.slice(0, 3).map((property) => (
+                <PropertyCardHorizontal
+                  key={`commercial-${property.id}`}
+                  property={property}
+                  onPress={() => navigation.navigate('PropertyDetail', { propertyId: property.id, property })}
+                  onContactPress={() => handlePropertyContact(property)}
+                />
+              ))}
+            </View>
+          ) : <Text style={styles.emptyCategoryText}>No sample commercial listings are available.</Text>}
+        </View>
+
         {/* Trending Rentals */}
         <View style={styles.sectionContainer}>
           <SectionHeading
-            title="Trending Rentals"
-            subtitle="Top reviewed homes ready for immediate move-in"
+            title="Trending Rental Homes"
+            subtitle="Ready to move-in flats with instant agreement support"
             onSeeAll={() => handleQuickCategory('rent', 'residential')}
           />
           <View style={styles.verticalListContainer}>
             {rentalProperties.slice(0, 4).map((prop) => (
               <PropertyCardHorizontal
-                key={prop.id}
+                key={`rental-${prop.id}`}
                 property={prop}
                 onPress={() =>
                   navigation.navigate('PropertyDetail', {
@@ -426,22 +466,23 @@ export const BuyerHomeScreen: React.FC = () => {
                     property: prop,
                   })
                 }
+                  onContactPress={() => handlePropertyContact(prop)}
               />
             ))}
           </View>
         </View>
 
-        {/* Prime Investment & Buy Properties */}
+        {/* Prime Properties to Buy */}
         <View style={styles.sectionContainer}>
           <SectionHeading
-            title="Prime Properties to Buy"
-            subtitle="Villas, luxury penthouses & gated societies"
+            title="Prime Investment & Buy Properties"
+            subtitle="Villas, penthouses & RERA approved societies"
             onSeeAll={() => handleQuickCategory('buy', 'residential')}
           />
           <View style={styles.verticalListContainer}>
             {buyProperties.slice(0, 2).map((prop) => (
               <PropertyCardVertical
-                key={prop.id}
+                key={`buy-${prop.id}`}
                 property={prop}
                 onPress={() =>
                   navigation.navigate('PropertyDetail', {
@@ -449,45 +490,99 @@ export const BuyerHomeScreen: React.FC = () => {
                     property: prop,
                   })
                 }
+                onContactPress={() => handlePropertyContact(prop)}
                 style={{ marginBottom: spacing.md }}
               />
             ))}
           </View>
         </View>
 
-        {/* Kirayedar24 Trust Metrics */}
+        {/* Home Services & Utilities Showcase */}
+        <View style={styles.sectionContainer}>
+          <SectionHeading
+            title="Essential Home Services"
+            subtitle="Trusted professionals for moving, cleaning & legal paperwork"
+            onSeeAll={() => navigation.navigate('ServicesCatalog')}
+          />
+          <View style={styles.servicesGrid}>
+            {[
+              { id: 'agreement', title: 'Rent Agreement', sub: 'E-Stamping & Delivery', icon: 'shield-check', color: '#027A48', bg: '#ECFDF3' },
+              { id: 'packers', title: 'Packers & Movers', sub: 'Safe Relocation', icon: 'truck', color: '#175CD3', bg: '#EFF8FF' },
+              { id: 'clean', title: 'Deep Cleaning', sub: 'Sanitized Living', icon: 'sparkles', color: '#C11574', bg: '#FDF4FF' },
+              { id: 'paint', title: 'Painting & Repair', sub: 'Expert Finish', icon: 'edit', color: '#B54708', bg: '#FEF0C7' },
+            ].map((srv) => (
+              <TouchableOpacity
+                key={srv.id}
+                style={styles.serviceItemCard}
+                onPress={() => navigation.navigate('ServicesCatalog')}
+                activeOpacity={0.8}
+              >
+                <View style={[styles.serviceIconCircle, { backgroundColor: srv.bg }]}>
+                  <Icon name={srv.icon as any} size={20} color={srv.color} />
+                </View>
+                <Text style={styles.serviceTitle}>{srv.title}</Text>
+                <Text style={styles.serviceSubtitle}>{srv.sub}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {/* Saved Properties Preview (if any) */}
+        {shortlistedProperties.length > 0 && (
+          <View style={styles.savedPreviewCard}>
+            <View style={styles.savedPreviewLeft}>
+              <View style={styles.savedHeartCircle}>
+                <Icon name="heart-filled" size={16} color={colors.danger} />
+              </View>
+              <View>
+                <Text style={styles.savedPreviewTitle}>
+                  {shortlistedProperties.length} Saved {shortlistedProperties.length === 1 ? 'Home' : 'Homes'}
+                </Text>
+                <Text style={styles.savedPreviewSubtitle}>Quickly compare shortlisted properties</Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              style={styles.savedPreviewBtn}
+              onPress={() => navigation.navigate('Shortlisted')}
+            >
+              <Text style={styles.savedPreviewBtnText}>View All →</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Kirayedar24 Trust Metrics Footer */}
         <View style={styles.trustShieldContainer}>
           <View style={styles.trustBadge}>
-            <Icon name="shield-check" size={16} color={colors.primary} />
+            <Icon name="shield-check" size={15} color={colors.primary} />
             <Text style={styles.trustBadgeText}>THE KIRAYEDAR24 ASSURANCE</Text>
           </View>
-          <Text style={styles.trustTitle}>Why Millions Trust Kirayedar24</Text>
+          <Text style={styles.trustTitle}>India's Transparent Realty App</Text>
           <Text style={styles.trustSubtitle}>
-            Eliminating broker fees, deceptive listings, and paperwork delays.
+            Eliminating broker fees, deceptive photos, and unexpected paperwork delays.
           </Text>
 
           <View style={styles.trustStatsGrid}>
             <View style={styles.trustStatCard}>
               <Text style={styles.statValue}>100%</Text>
-              <Text style={styles.statLabel}>Owner Verified</Text>
+              <Text style={styles.statLabel}>Owner Direct</Text>
             </View>
             <View style={styles.trustStatCard}>
               <Text style={styles.statValue}>₹0</Text>
               <Text style={styles.statLabel}>Brokerage Paid</Text>
             </View>
             <View style={styles.trustStatCard}>
-              <Text style={styles.statValue}>48h</Text>
-              <Text style={styles.statLabel}>Fast Move-in</Text>
+              <Text style={styles.statValue}>24/7</Text>
+              <Text style={styles.statLabel}>Support Care</Text>
             </View>
             <View style={styles.trustStatCard}>
               <Text style={styles.statValue}>4.9 ★</Text>
-              <Text style={styles.statLabel}>Tenant Rating</Text>
+              <Text style={styles.statLabel}>User Rating</Text>
             </View>
           </View>
         </View>
       </ScrollView>
 
-      {/* City Selector Modal */}
+      {/* City & Location Selector Modal */}
       <Modal
         visible={cityModalVisible}
         animationType="slide"
@@ -499,69 +594,63 @@ export const BuyerHomeScreen: React.FC = () => {
           activeOpacity={1}
           onPress={() => setCityModalVisible(false)}
         >
-          <View style={styles.cityModalSheet}>
-            <View style={styles.modalHandle} />
-            <View style={styles.modalHeaderRow}>
-              <Text style={styles.cityModalTitle}>Select Your City</Text>
+          <View style={styles.modalCard} onStartShouldSetResponder={() => true}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Select Your City</Text>
+                <Text style={styles.modalSubtitle}>Discover properties & services nearby</Text>
+              </View>
               <TouchableOpacity
+                style={styles.modalCloseBtn}
                 onPress={() => setCityModalVisible(false)}
-                style={styles.modalCloseButton}
               >
-                <Icon name="close" size={18} color="#64748B" />
+                <Icon name="close" size={16} color="#0F172A" />
               </TouchableOpacity>
             </View>
-            <Text style={styles.cityModalSubtitle}>
-              Showing verified listings and services in selected city
-            </Text>
 
-            <View style={styles.cityGrid}>
-              {CITIES.map((c) => {
-                const isSelected = selectedCity === c.name;
-                return (
-                  <TouchableOpacity
-                    key={c.name}
-                    style={[styles.cityCard, isSelected && styles.cityCardSelected]}
-                    onPress={() => {
-                      setSelectedCity(c.name);
-                      setCityModalVisible(false);
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <View style={styles.cityCardLeft}>
-                      <View
-                        style={[
-                          styles.cityIconBox,
-                          isSelected && styles.cityIconBoxSelected,
-                        ]}
-                      >
-                        <Icon
-                          name="building"
-                          size={16}
-                          color={isSelected ? colors.primaryDark : '#64748B'}
-                        />
-                      </View>
-                      <View>
-                        <Text
-                          style={[
-                            styles.cityName,
-                            isSelected && styles.cityNameSelected,
-                          ]}
-                        >
-                          {c.name}
-                        </Text>
-                        <Text style={styles.cityState}>{c.state}</Text>
-                      </View>
-                    </View>
-                    {isSelected && (
-                      <Icon name="check-circle" size={18} color={colors.primaryDark} />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 380 }}>
+              <Text style={styles.modalSectionLabel}>Popular Cities</Text>
+              <View style={styles.cityGrid}>
+                {CITIES.map((c) => {
+                  const selected = selectedCity.toLowerCase() === c.name.toLowerCase();
+                  return (
+                    <TouchableOpacity
+                      key={c.name}
+                      style={[styles.cityPill, selected && styles.cityPillActive]}
+                      onPress={() => handleCitySelect(c.name)}
+                      activeOpacity={0.7}
+                    >
+                      <Icon
+                        name="map-pin"
+                        size={13}
+                        color={selected ? '#0F172A' : colors.primaryDark}
+                      />
+                      <Text style={[styles.cityName, selected && styles.cityNameActive]}>
+                        {c.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </ScrollView>
           </View>
         </TouchableOpacity>
       </Modal>
+
+      <HomeDrawer
+        visible={drawerVisible}
+        role={role}
+        navigation={navigation}
+        onClose={() => setDrawerVisible(false)}
+      />
+      {contactProperty && (
+        <ContactUnlockModal
+          visible
+          onClose={() => setContactProperty(null)}
+          ownerName={contactProperty.owner.name}
+          propertyTitle={contactProperty.title}
+        />
+      )}
     </View>
   );
 };
@@ -569,13 +658,13 @@ export const BuyerHomeScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F7F8FA',
   },
   header: {
     backgroundColor: '#0B0F19',
     paddingTop: Platform.OS === 'ios' ? 44 : 16,
-    paddingHorizontal: 18,
-    paddingBottom: 20,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
   },
@@ -583,87 +672,101 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    marginBottom: 6,
   },
   logoStyle: {
-    marginLeft: -8,
+    marginLeft: -4,
   },
   headerControls: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 6,
   },
   locationPill: {
+    flexShrink: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(253, 176, 34, 0.25)',
+    minHeight: 44,
+    backgroundColor: 'rgba(253, 176, 34, 0.12)',
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 20,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(253, 176, 34, 0.25)',
     gap: 5,
   },
   cityNameText: {
-    ...typography.badge,
+    ...typography.caption,
     color: '#FFFFFF',
-    fontSize: 12,
     fontWeight: '700',
+    fontSize: 12,
     maxWidth: 90,
   },
-  notificationButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+  headerIconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.12)',
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
   },
-  notificationBadge: {
+  badgeCount: {
     position: 'absolute',
-    top: 6,
-    right: 6,
+    top: -3,
+    right: -3,
+    backgroundColor: colors.primary,
+    borderRadius: 8,
     minWidth: 16,
     height: 16,
-    borderRadius: 8,
-    backgroundColor: '#EF4444',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 3,
+    borderWidth: 1.5,
+    borderColor: '#0B0F19',
   },
-  notificationBadgeText: {
-    color: '#FFFFFF',
+  badgeText: {
+    ...typography.badge,
     fontSize: 9,
+    color: '#0F172A',
     fontWeight: '800',
   },
   greetingContainer: {
-    marginBottom: 16,
+    marginBottom: 8,
   },
   greetingTitle: {
+    flex: 1,
     ...typography.h2,
     color: '#FFFFFF',
     fontSize: 20,
     fontWeight: '800',
   },
+  greetingTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
   greetingSubtitle: {
-    ...typography.bodySmall,
+    ...typography.caption,
     color: '#94A3B8',
+    fontSize: 12,
     marginTop: 2,
-    fontSize: 13,
   },
   heroSearchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
+    shadowOpacity: 0.15,
     shadowRadius: 8,
     elevation: 4,
   },
@@ -674,10 +777,10 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   searchIconWrapper: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: 'rgba(253, 176, 34, 0.15)',
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: colors.primarySubtle,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -686,14 +789,15 @@ const styles = StyleSheet.create({
   },
   searchMainPlaceholder: {
     ...typography.subtitle,
-    color: '#1E293B',
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
+    color: '#0F172A',
   },
   searchSubPlaceholder: {
     ...typography.caption,
-    color: '#94A3B8',
     fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
   },
   filterButton: {
     width: 36,
@@ -702,329 +806,373 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 8,
   },
-  tabSwitcher: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderRadius: 12,
-    padding: 4,
-    marginTop: 14,
-    gap: 4,
+  quickChipsRow: {
+    gap: 8,
+    paddingVertical: 0,
   },
-  tabButton: {
-    flex: 1,
+  quickChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    borderRadius: 9,
+    gap: 5,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
-  tabButtonActive: {
+  quickChipActive: {
     backgroundColor: colors.primary,
+    borderColor: colors.primaryDark,
   },
-  tabText: {
+  quickChipText: {
     ...typography.caption,
-    color: '#94A3B8',
+    color: '#CBD5E1',
     fontWeight: '600',
-    fontSize: 12,
+    fontSize: 11,
   },
-  tabTextActive: {
+  quickChipTextActive: {
     color: '#0F172A',
     fontWeight: '800',
   },
   scrollContent: {
-    paddingBottom: 36,
+    paddingBottom: 40,
   },
   bannerWrapper: {
     paddingHorizontal: 16,
-    marginTop: 12,
-    marginBottom: 6,
+    paddingTop: 14,
   },
-  sectionContainer: {
-    marginTop: 20,
+  campaignBannerContainer: {
     paddingHorizontal: 16,
+    marginTop: 16,
   },
-  sectionHeaderSimple: {
+  campaignBanner: {
     flexDirection: 'row',
+    backgroundColor: '#111827',
+    borderRadius: 20,
+    padding: 16,
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  sectionTitleBold: {
-    ...typography.h3,
-    color: '#0F172A',
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  seeAllText: {
-    ...typography.caption,
-    color: colors.primaryDark,
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  quickServicesGrid: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  serviceItemCard: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 12,
-    alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.03,
-    shadowRadius: 4,
-    elevation: 1,
+    borderColor: 'rgba(253, 176, 34, 0.25)',
   },
-  serviceBadge: {
-    position: 'absolute',
-    top: -6,
-    backgroundColor: '#0F172A',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
+  campaignLeft: {
+    flex: 1,
+    paddingRight: 10,
   },
-  serviceBadgeText: {
-    color: '#FDB022',
-    fontSize: 8,
-    fontWeight: '800',
-  },
-  serviceIconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-    marginTop: 4,
-  },
-  serviceTitle: {
-    ...typography.subtitle,
-    color: '#0F172A',
-    fontSize: 12,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  serviceSubtitle: {
-    ...typography.caption,
-    color: '#64748B',
-    fontSize: 10,
-    textAlign: 'center',
-    marginTop: 2,
-  },
-  promoCarouselContainer: {
-    paddingHorizontal: 16,
-    paddingTop: 18,
-    gap: 12,
-  },
-  promoCard: {
-    width: SCREEN_WIDTH * 0.88,
-    borderRadius: 20,
-    padding: 20,
-    overflow: 'hidden',
-    position: 'relative',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  promoContent: {
-    zIndex: 1,
-  },
-  promoChip: {
+  campaignPill: {
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
-    gap: 5,
-    borderWidth: 1,
-    borderColor: colors.primary,
-    backgroundColor: 'rgba(253, 176, 34, 0.12)',
+    gap: 4,
+    backgroundColor: 'rgba(253, 176, 34, 0.15)',
     paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    marginBottom: 10,
+    paddingVertical: 3,
+    borderRadius: 10,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(253, 176, 34, 0.3)',
   },
-  promoChipText: {
+  campaignPillText: {
+    ...typography.badge,
     color: colors.primary,
     fontSize: 9,
     fontWeight: '800',
     letterSpacing: 0.5,
   },
-  promoHeading: {
-    ...typography.h3,
+  campaignTitle: {
+    ...typography.subtitle,
     color: '#FFFFFF',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '800',
-    marginBottom: 6,
+    marginBottom: 4,
   },
-  promoDesc: {
-    ...typography.bodySmall,
-    color: '#CBD5E1',
-    fontSize: 12,
-    lineHeight: 18,
-    marginBottom: 14,
-    paddingRight: 40,
+  campaignDesc: {
+    ...typography.caption,
+    color: '#94A3B8',
+    fontSize: 11,
+    lineHeight: 16,
+    marginBottom: 10,
   },
-  promoActionButton: {
+  campaignCTA: {
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: colors.primary,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
     gap: 6,
+    backgroundColor: colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
   },
-  promoActionText: {
+  campaignCTAText: {
     ...typography.badge,
     color: '#0F172A',
     fontWeight: '800',
-    fontSize: 12,
+    fontSize: 11,
   },
-  promoDecorativeIcon: {
-    position: 'absolute',
-    right: 12,
-    bottom: 12,
-    zIndex: 0,
+  campaignIconWrapper: {
+    width: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  localityScroll: {
-    gap: 8,
-    paddingTop: 6,
+  sectionContainer: {
+    marginTop: 18,
+    paddingHorizontal: 16,
   },
-  localityChip: {
+  categoriesCarousel: {
+    gap: 12,
+    paddingHorizontal: 1,
+    paddingVertical: 5,
+  },
+  categoryCard: {
+    width: Math.min(224, Math.max(196, SCREEN_WIDTH * 0.54)),
+    minHeight: 154,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 15,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: '#E4E9F0',
+    justifyContent: 'space-between',
+    ...shadows.sm,
+  },
+  categoryCardTop: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    justifyContent: 'space-between',
+    marginBottom: 10,
   },
-  localityChipText: {
+  categoryIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#FFF5D9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  categoryIndex: {
+    ...typography.badge,
+    color: '#9AA4B2',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  categoryTitle: {
+    ...typography.subtitle,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '800',
+    color: '#0F172A',
+    minHeight: 40,
+    textAlign: 'left',
+    marginBottom: 8,
+  },
+  categoryCardBottom: {
+    minHeight: 28,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
+    borderTopColor: '#EEF1F5',
+    paddingTop: 7,
+  },
+  categoryCount: {
     ...typography.caption,
-    color: '#1E293B',
-    fontWeight: '600',
     fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
   },
   horizontalPropertiesList: {
-    paddingTop: 4,
+    paddingVertical: 4,
   },
   verticalListContainer: {
-    gap: 12,
     marginTop: 4,
   },
+  emptyCategoryText: {
+    ...typography.bodySmall,
+    color: colors.textSecondary,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  servicesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  serviceItemCard: {
+    width: (SCREEN_WIDTH - 42) / 2,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadows.sm,
+  },
+  serviceIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  serviceTitle: {
+    ...typography.subtitle,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  serviceSubtitle: {
+    ...typography.caption,
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  savedPreviewCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFF1F2',
+    marginHorizontal: 16,
+    marginTop: 18,
+    padding: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+  },
+  savedPreviewLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  savedHeartCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FFE4E6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  savedPreviewTitle: {
+    ...typography.subtitle,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#9F1239',
+  },
+  savedPreviewSubtitle: {
+    ...typography.caption,
+    color: '#BE123C',
+    fontSize: 11,
+  },
+  savedPreviewBtn: {
+    backgroundColor: '#9F1239',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  savedPreviewBtnText: {
+    ...typography.badge,
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 11,
+  },
   trustShieldContainer: {
-    margin: 16,
-    marginTop: 28,
-    backgroundColor: '#0F172A',
-    borderRadius: 24,
-    padding: 22,
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 16,
+    marginTop: 22,
+    borderRadius: 20,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
     alignItems: 'center',
   },
   trustBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: 'rgba(253, 176, 34, 0.12)',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 16,
+    backgroundColor: colors.primarySubtle,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(253, 176, 34, 0.3)',
-    marginBottom: 10,
+    borderColor: colors.primaryLight,
+    marginBottom: 8,
   },
   trustBadgeText: {
-    color: colors.primary,
+    ...typography.badge,
+    color: colors.primaryDark,
     fontSize: 10,
     fontWeight: '800',
-    letterSpacing: 0.5,
   },
   trustTitle: {
     ...typography.h3,
-    color: '#FFFFFF',
-    fontSize: 18,
+    fontSize: 16,
+    color: '#0F172A',
     fontWeight: '800',
-    textAlign: 'center',
-    marginBottom: 6,
+    marginBottom: 4,
   },
   trustSubtitle: {
-    ...typography.bodySmall,
-    color: '#94A3B8',
-    fontSize: 12,
+    ...typography.caption,
+    color: '#64748B',
     textAlign: 'center',
     lineHeight: 18,
-    paddingHorizontal: 16,
-    marginBottom: 20,
+    marginBottom: 14,
   },
   trustStatsGrid: {
     flexDirection: 'row',
-    gap: 8,
     width: '100%',
+    justifyContent: 'space-between',
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.divider,
   },
   trustStatCard: {
-    flex: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 14,
-    paddingVertical: 12,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    flex: 1,
   },
   statValue: {
     ...typography.h3,
-    color: colors.primary,
-    fontSize: 17,
+    fontSize: 15,
     fontWeight: '800',
+    color: '#0F172A',
   },
   statLabel: {
     ...typography.caption,
-    color: '#94A3B8',
-    fontSize: 9,
-    fontWeight: '600',
+    color: '#64748B',
+    fontSize: 10,
     marginTop: 2,
-    textAlign: 'center',
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
     justifyContent: 'flex-end',
   },
-  cityModalSheet: {
+  modalCard: {
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    padding: 24,
-    maxHeight: '75%',
+    padding: 20,
+    paddingBottom: Platform.OS === 'ios' ? 36 : 20,
   },
-  modalHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#CBD5E1',
-    alignSelf: 'center',
-    marginBottom: 16,
-  },
-  modalHeaderRow: {
+  modalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
   },
-  cityModalTitle: {
-    ...typography.h2,
-    fontSize: 20,
+  modalTitle: {
+    ...typography.h3,
+    fontSize: 18,
     color: '#0F172A',
-    fontWeight: '800',
   },
-  modalCloseButton: {
+  modalSubtitle: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontSize: 12,
+  },
+  modalCloseBtn: {
     width: 32,
     height: 32,
     borderRadius: 16,
@@ -1032,58 +1180,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  cityModalSubtitle: {
-    ...typography.bodySmall,
-    color: '#64748B',
-    fontSize: 13,
-    marginTop: 4,
-    marginBottom: 18,
+  modalSectionLabel: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 10,
   },
   cityGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
+    marginBottom: 16,
   },
-  cityCard: {
+  cityPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 14,
-    borderRadius: 14,
+    gap: 6,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
   },
-  cityCardSelected: {
-    borderColor: colors.primary,
-    backgroundColor: 'rgba(253, 176, 34, 0.08)',
-  },
-  cityCardLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  cityIconBox: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#E2E8F0',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cityIconBoxSelected: {
+  cityPillActive: {
     backgroundColor: colors.primary,
+    borderColor: colors.primaryDark,
   },
   cityName: {
-    ...typography.subtitle,
-    fontSize: 14,
+    ...typography.bodySmall,
+    color: '#334155',
+    fontWeight: '600',
+  },
+  cityNameActive: {
     color: '#0F172A',
-    fontWeight: '700',
-  },
-  cityNameSelected: {
-    color: colors.primaryDark,
-  },
-  cityState: {
-    ...typography.caption,
-    fontSize: 11,
-    color: '#64748B',
+    fontWeight: '800',
   },
 });

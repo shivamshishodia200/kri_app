@@ -21,28 +21,19 @@ import { Button } from '../../components/common/Button';
 import { formatIndianCurrency } from '../../components/common/PriceDisplay';
 import { Icon } from '../../components/common/Icon';
 
+import { PaymentPendingModal } from '../../components/common/PaymentPendingModal';
+import { isSubscriptionActive } from '../../services/subscriptionService';
+
 type Props = NativeStackScreenProps<RootStackParamList, 'Subscription'>;
 
 export const SubscriptionScreen: React.FC<Props> = ({ navigation }) => {
-  const { activeSubscription, changeSubscription } = useBooking();
-  const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlan>(activeSubscription);
+  const { activeSubscription } = useBooking();
+  const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlan>(activeSubscription || SUBSCRIPTION_PLANS[0]);
+  const [showPendingModal, setShowPendingModal] = useState(false);
 
   const handleSelectPlan = (plan: SubscriptionPlan) => {
     setSelectedPlan(plan);
-    Alert.alert(
-      'Upgrade Subscription',
-      `Upgrade your owner plan to "${plan.name}" at ${formatIndianCurrency(plan.price)}/${plan.billingPeriod}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm Upgrade',
-          onPress: () => {
-            changeSubscription(plan);
-            Alert.alert('Plan Activated', `You are now on ${plan.name} plan!`);
-          },
-        },
-      ]
-    );
+    setShowPendingModal(true);
   };
 
   return (
@@ -50,6 +41,14 @@ export const SubscriptionScreen: React.FC<Props> = ({ navigation }) => {
       <AppHeader title="Landlord & Owner Plans" onBack={() => navigation.goBack()} />
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.planNotice}>
+          <Icon name="info" size={16} color={colors.primaryDark} />
+          <Text style={styles.planNoticeText}>
+            {isSubscriptionActive(activeSubscription)
+              ? `Verified listing plan active through ${new Date(activeSubscription!.expiresAt!).toLocaleDateString()}.`
+              : 'No verified owner listing plan is active. Choosing a plan opens a demo payment notice only.'}
+          </Text>
+        </View>
         {/* Header Hero */}
         <View style={styles.heroSection}>
           <Text style={styles.heroTitle}>Boost Your Rental Revenue</Text>
@@ -60,7 +59,7 @@ export const SubscriptionScreen: React.FC<Props> = ({ navigation }) => {
 
         {/* Plan Cards */}
         {SUBSCRIPTION_PLANS.map((plan) => {
-          const isActive = activeSubscription.id === plan.id;
+          const isActive = isSubscriptionActive(activeSubscription) && activeSubscription?.id === plan.id;
           const isSelected = selectedPlan.id === plan.id;
 
           return (
@@ -114,6 +113,15 @@ export const SubscriptionScreen: React.FC<Props> = ({ navigation }) => {
           );
         })}
       </ScrollView>
+
+      <PaymentPendingModal
+        visible={showPendingModal}
+        onClose={() => setShowPendingModal(false)}
+        title="Subscription Plan Upgrade"
+        featureName={`Kirayedar24 ${selectedPlan.name} Plan`}
+        amount={selectedPlan.price}
+        description={`The ${selectedPlan.name} plan billing integration is ready for payment gateway configuration. Automated billing activation will go live once Razorpay gateway credentials are connected.`}
+      />
     </SafeAreaView>
   );
 };
@@ -130,6 +138,23 @@ const styles = StyleSheet.create({
   heroSection: {
     alignItems: 'center',
     marginBottom: spacing.xl,
+  },
+  planNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    backgroundColor: colors.primarySubtle,
+    borderWidth: 1,
+    borderColor: colors.primaryMuted,
+    borderRadius: radii.md,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+  },
+  planNoticeText: {
+    ...typography.bodySmall,
+    color: colors.textPrimary,
+    flex: 1,
+    lineHeight: 19,
   },
   heroTitle: {
     ...typography.h2,

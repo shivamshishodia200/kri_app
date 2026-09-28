@@ -8,6 +8,7 @@ import {
   Image,
   StatusBar,
   Platform,
+  Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -19,6 +20,7 @@ import { useChat } from '../../context/ChatContext';
 import { ChatThread } from '../../types/chat';
 import { EmptyState } from '../../components/common/EmptyState';
 import { Icon } from '../../components/common/Icon';
+import { propertyService } from '../../services/propertyService';
 
 export const ChatListScreen: React.FC = () => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -32,7 +34,24 @@ export const ChatListScreen: React.FC = () => {
     return true;
   });
 
-  const handleOpenChat = (thread: ChatThread) => {
+  const handleOpenChat = async (thread: ChatThread) => {
+    if (thread.propertyId) {
+      const entitlement = await propertyService.checkContactEntitlement(thread.propertyId);
+      if (!entitlement.allowed) {
+        Alert.alert(
+          'Contact access required',
+          'This property conversation is unavailable until the server confirms contact access.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'View listing',
+              onPress: () => navigation.navigate('PropertyDetail', { propertyId: thread.propertyId! }),
+            },
+          ]
+        );
+        return;
+      }
+    }
     markThreadAsRead(thread.id);
     navigation.navigate('ChatDetail', {
       threadId: thread.id,

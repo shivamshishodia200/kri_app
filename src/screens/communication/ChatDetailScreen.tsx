@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -22,6 +22,7 @@ import { ChatMessage } from '../../types/chat';
 import { AppHeader } from '../../components/common/AppHeader';
 import { formatIndianCurrency } from '../../components/common/PriceDisplay';
 import { Icon } from '../../components/common/Icon';
+import { propertyService } from '../../services/propertyService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ChatDetail'>;
 
@@ -38,9 +39,27 @@ export const ChatDetailScreen: React.FC<Props> = ({ route, navigation }) => {
 
   const thread = getThreadById(threadId);
   const [inputMessage, setInputMessage] = useState('');
+  const [contactAllowed, setContactAllowed] = useState<boolean | null>(thread?.propertyId ? null : true);
   const flatListRef = useRef<FlatList>(null);
 
+  useEffect(() => {
+    let mounted = true;
+    if (!thread?.propertyId) {
+      setContactAllowed(true);
+      return () => { mounted = false; };
+    }
+    setContactAllowed(null);
+    propertyService.checkContactEntitlement(thread.propertyId).then((result) => {
+      if (mounted) setContactAllowed(result.allowed);
+    });
+    return () => { mounted = false; };
+  }, [thread?.propertyId]);
+
   const handleSend = (textToSend?: string) => {
+    if (contactAllowed !== true) {
+      Alert.alert('Contact access required', 'The server has not confirmed access to this property conversation.');
+      return;
+    }
     const text = textToSend || inputMessage;
     if (!text.trim()) return;
 
@@ -53,8 +72,17 @@ export const ChatDetailScreen: React.FC<Props> = ({ route, navigation }) => {
     }, 100);
   };
 
-  const handleCall = () => {
-    Alert.alert('Calling', `Connecting call to ${participantName || 'Property Contact'}...`);
+  const handleCall = async () => {
+    if (!thread?.propertyId) {
+      Alert.alert('Call unavailable', 'No verified phone number is available in this demo conversation.');
+      return;
+    }
+    const entitlement = await propertyService.checkContactEntitlement(thread.propertyId);
+    if (!entitlement.allowed) {
+      Alert.alert('Contact access required', 'The server has not confirmed contact access for this listing.');
+      return;
+    }
+    Alert.alert('Call', `Contact access verified for ${participantName || 'property contact'}.`);
   };
 
   return (
@@ -68,6 +96,7 @@ export const ChatDetailScreen: React.FC<Props> = ({ route, navigation }) => {
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={handleCall}
+            disabled={contactAllowed !== true}
             style={styles.callHeaderBtn}
           >
             <Icon name="phone" size={18} color={colors.primaryDark} />
@@ -101,6 +130,17 @@ export const ChatDetailScreen: React.FC<Props> = ({ route, navigation }) => {
           </View>
           <Icon name="chevron-right" size={18} color={colors.textSecondary} />
         </TouchableOpacity>
+      )}
+
+      {thread?.propertyId && contactAllowed !== true && (
+        <View style={styles.contactGateNotice}>
+          <Icon name="lock" size={16} color={colors.primaryDark} />
+          <Text style={styles.contactGateText}>
+            {contactAllowed === null
+              ? 'Checking contact access…'
+              : 'Messaging and calling are locked until server access is confirmed.'}
+          </Text>
+        </View>
       )}
 
       {/* Message List */}
@@ -185,7 +225,7 @@ export const ChatDetailScreen: React.FC<Props> = ({ route, navigation }) => {
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={() => handleSend()}
-            disabled={!inputMessage.trim()}
+            disabled={!inputMessage.trim() || contactAllowed !== true}
             style={[
               styles.sendButton,
               Boolean(inputMessage.trim()) && styles.sendButtonActive,
@@ -227,6 +267,21 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+  },
+  contactGateNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.primarySubtle,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  contactGateText: {
+    ...typography.caption,
+    color: colors.textPrimary,
+    flex: 1,
   },
   propertyThumb: {
     width: 44,

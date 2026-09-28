@@ -20,7 +20,9 @@ import { ServicesCatalogScreen } from '../screens/services/ServicesCatalogScreen
 import { BookingConfirmationScreen } from '../screens/services/BookingConfirmationScreen';
 import { MyBookingsScreen } from '../screens/services/MyBookingsScreen';
 import { PayRentScreen } from '../screens/services/PayRentScreen';
+import { PayBillsScreen } from '../screens/services/PayBillsScreen';
 import { SubscriptionScreen } from '../screens/services/SubscriptionScreen';
+
 
 // Communication
 import { ChatListScreen } from '../screens/communication/ChatListScreen';
@@ -36,6 +38,8 @@ import { HelpFaqScreen } from '../screens/profile/HelpFaqScreen';
 import { AboutScreen } from '../screens/profile/AboutScreen';
 import { ContactUsScreen } from '../screens/profile/ContactUsScreen';
 import { ReferralScreen } from '../screens/profile/ReferralScreen';
+import { TermsAndConditionsScreen } from '../screens/auth/TermsAndConditionsScreen';
+import { PrivacyPolicyScreen } from '../screens/auth/PrivacyPolicyScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -70,7 +74,9 @@ export const AppNavigator: React.FC = () => {
           <Stack.Screen name="BookingConfirmation" component={BookingConfirmationScreen} />
           <Stack.Screen name="MyBookings" component={MyBookingsScreen} />
           <Stack.Screen name="PayRent" component={PayRentScreen} />
+          <Stack.Screen name="PayBills" component={PayBillsScreen} />
           <Stack.Screen name="Subscription" component={SubscriptionScreen} />
+
 
           {/* Communication */}
           <Stack.Screen name="ChatList" component={ChatListScreen} />
@@ -82,6 +88,8 @@ export const AppNavigator: React.FC = () => {
           <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
           <Stack.Screen name="Settings" component={SettingsScreen} />
           <Stack.Screen name="PrivacySecurity" component={PrivacySecurityScreen} />
+          <Stack.Screen name="TermsAndConditions" component={TermsAndConditionsScreen} />
+          <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicyScreen} />
           <Stack.Screen name="HelpFaq" component={HelpFaqScreen} />
           <Stack.Screen name="About" component={AboutScreen} />
           <Stack.Screen name="ContactUs" component={ContactUsScreen} />
@@ -91,3 +99,4 @@ export const AppNavigator: React.FC = () => {
     </Stack.Navigator>
   );
 };
+

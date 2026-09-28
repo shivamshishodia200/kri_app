@@ -50,7 +50,9 @@ export type IconName =
   | 'switch'
   | 'award'
   | 'building'
-  | 'briefcase';
+  | 'briefcase'
+  | 'alert-circle';
+
 
 interface IconProps {
   name: IconName;
@@ -249,6 +251,20 @@ export const Icon: React.FC<IconProps> = ({
           />
         </Svg>
       );
+    case 'alert-circle':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Circle cx="12" cy="12" r="10" stroke={color} strokeWidth={strokeWidth} />
+          <Path
+            d="M12 8v4M12 16h.01"
+            stroke={color}
+            strokeWidth={strokeWidth}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </Svg>
+      );
+
     case 'chevron-left':
       return (
         <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   ViewStyle,
+  Alert,
 } from 'react-native';
 import { colors } from '../../theme/colors';
 import { radii, spacing } from '../../theme/spacing';
@@ -22,6 +23,7 @@ interface PropertyCardVerticalProps {
   onPress: () => void;
   style?: ViewStyle;
   cardWidth?: number;
+  onContactPress?: () => void;
 }
 
 export const PropertyCardVertical: React.FC<PropertyCardVerticalProps> = ({
@@ -29,11 +31,23 @@ export const PropertyCardVertical: React.FC<PropertyCardVerticalProps> = ({
   onPress,
   style,
   cardWidth,
+  onContactPress,
 }) => {
   const { isShortlisted, toggleShortlist } = useProperty();
+  const [favoritePending, setFavoritePending] = useState(false);
+  const [imageFailed, setImageFailed] = useState(false);
   const saved = isShortlisted(property.id);
 
   const mainImage = property.images[0] || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=800&q=80';
+
+  const handleFavoritePress = async (event: { stopPropagation: () => void }) => {
+    event.stopPropagation();
+    if (favoritePending) return;
+    setFavoritePending(true);
+    const savedSuccessfully = await toggleShortlist(property.id);
+    setFavoritePending(false);
+    if (!savedSuccessfully) Alert.alert('Saved properties', 'Could not sync this favorite. Please retry.');
+  };
 
   return (
     <TouchableOpacity
@@ -47,7 +61,13 @@ export const PropertyCardVertical: React.FC<PropertyCardVerticalProps> = ({
     >
       {/* Property Image Container */}
       <View style={styles.imageContainer}>
-        <Image source={{ uri: mainImage }} style={styles.image} resizeMode="cover" />
+        <Image
+          source={{ uri: mainImage }}
+          style={styles.image}
+          resizeMode="cover"
+          onError={() => setImageFailed(true)}
+        />
+        {imageFailed && <View style={styles.imageFallback}><Icon name="building" size={28} color={colors.textSecondary} /></View>}
 
         {/* Top Badges */}
         <View style={styles.topBadgesRow}>
@@ -63,8 +83,11 @@ export const PropertyCardVertical: React.FC<PropertyCardVerticalProps> = ({
         {/* Shortlist Heart Button */}
         <TouchableOpacity
           activeOpacity={0.8}
-          onPress={() => toggleShortlist(property.id)}
-          style={styles.heartButton}
+          onPress={handleFavoritePress}
+          disabled={favoritePending}
+          style={[styles.heartButton, favoritePending && styles.favoritePending]}
+          accessibilityRole="button"
+          accessibilityLabel={saved ? 'Remove from saved properties' : 'Save property'}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Icon
@@ -126,6 +149,24 @@ export const PropertyCardVertical: React.FC<PropertyCardVerticalProps> = ({
             <Text style={styles.specText}>{property.areaSqFt} sqft</Text>
           </View>
         </View>
+
+        {onContactPress && (
+          <View style={styles.actionRow}>
+            <Text style={styles.detailsHint}>View property details</Text>
+            <TouchableOpacity
+              style={styles.contactButton}
+              onPress={(event) => {
+                event.stopPropagation();
+                onContactPress();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Request property contact access"
+            >
+              <Icon name="lock" size={14} color={colors.darkText} />
+              <Text style={styles.contactText}>Contact</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     </TouchableOpacity>
   );
@@ -151,6 +192,12 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
+  imageFallback: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceSubtle,
+  },
   topBadgesRow: {
     position: 'absolute',
     top: spacing.sm,
@@ -169,6 +216,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     ...shadows.sm,
+  },
+  favoritePending: {
+    opacity: 0.55,
   },
   imageCountBadge: {
     position: 'absolute',
@@ -230,5 +280,34 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textPrimary,
     fontWeight: '600',
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 48,
+    marginTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: colors.divider,
+  },
+  detailsHint: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    flex: 1,
+  },
+  contactButton: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingHorizontal: spacing.sm,
+    borderRadius: 8,
+    backgroundColor: colors.primary,
+  },
+  contactText: {
+    ...typography.caption,
+    color: colors.darkText,
+    fontWeight: '700',
   },
 });
