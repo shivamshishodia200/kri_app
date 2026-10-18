@@ -1,0 +1,435 @@
+{
+    "info": {
+        "name": "Kirayedar - Subscription Property Flow",
+        "description": "Complete API flow for subscription-based property approval system",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "variable": [
+        {
+            "key": "baseUrl",
+            "value": "http://localhost:4045"
+        },
+        {
+            "key": "userToken",
+            "value": "YOUR_USER_TOKEN_HERE"
+        },
+        {
+            "key": "adminToken",
+            "value": "YOUR_ADMIN_TOKEN_HERE"
+        }
+    ],
+    "item": [
+        {
+            "name": "1. Add Property (User)",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{userToken}}"
+                    }
+                ],
+                "body": {
+                    "mode": "formdata",
+                    "formdata": [
+                        {
+                            "key": "state",
+                            "value": "Uttar Pradesh",
+                            "type": "text"
+                        },
+                        {
+                            "key": "city",
+                            "value": "Noida",
+                            "type": "text"
+                        },
+                        {
+                            "key": "locality",
+                            "value": "Sector 62",
+                            "type": "text"
+                        },
+                        {
+                            "key": "district",
+                            "value": "Gautam Buddha Nagar",
+                            "type": "text"
+                        },
+                        {
+                            "key": "pincode",
+                            "value": "201301",
+                            "type": "text"
+                        },
+                        {
+                            "key": "propertyType",
+                            "value": "Residential",
+                            "type": "text"
+                        },
+                        {
+                            "key": "specificType",
+                            "value": "Flat",
+                            "type": "text"
+                        },
+                        {
+                            "key": "bedrooms",
+                            "value": "2",
+                            "type": "text"
+                        },
+                        {
+                            "key": "bathrooms",
+                            "value": "2",
+                            "type": "text"
+                        },
+                        {
+                            "key": "areaSqFt",
+                            "value": "1200",
+                            "type": "text"
+                        },
+                        {
+                            "key": "price",
+                            "value": "15000",
+                            "type": "text"
+                        },
+                        {
+                            "key": "furnishingStatus",
+                            "value": "Semi-Furnished",
+                            "type": "text"
+                        },
+                        {
+                            "key": "parking",
+                            "value": "Available",
+                            "type": "text"
+                        },
+                        {
+                            "key": "availabilityStatus",
+                            "value": "Ready to Move",
+                            "type": "text"
+                        },
+                        {
+                            "key": "purpose",
+                            "value": "Rent",
+                            "type": "text"
+                        },
+                        {
+                            "key": "contactNumber",
+                            "value": "9876543210",
+                            "type": "text"
+                        }
+                    ]
+                },
+                "url": {
+                    "raw": "{{baseUrl}}/property/add",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "property",
+                        "add"
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "2. Create Razorpay Order",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{userToken}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"subscriptionPackageId\": \"YOUR_PACKAGE_ID_HERE\"\n}"
+                },
+                "url": {
+                    "raw": "{{baseUrl}}/api/subscription-purchase/create-order",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "subscription-purchase",
+                        "create-order"
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "3. Verify Payment & Create Subscription (UPDATED)",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{userToken}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"razorpay_order_id\": \"order_xxxxxxxxxxxxx\",\n  \"razorpay_payment_id\": \"pay_xxxxxxxxxxxxx\",\n  \"razorpay_signature\": \"signature_hash_here\",\n  \"subscriptionPackageId\": \"YOUR_PACKAGE_ID_HERE\",\n  \"propertyId\": \"YOUR_PROPERTY_ID_HERE\",\n  \"isFreeMode\": false\n}"
+                },
+                "url": {
+                    "raw": "{{baseUrl}}/api/subscription-purchase/verify-payment",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "subscription-purchase",
+                        "verify-payment"
+                    ]
+                },
+                "description": "⚠️ UPDATED: propertyId is now REQUIRED. This links the subscription to the specific property."
+            },
+            "response": []
+        },
+        {
+            "name": "3b. Verify Payment - FREE Plan",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{userToken}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"subscriptionPackageId\": \"YOUR_PACKAGE_ID_HERE\",\n  \"propertyId\": \"YOUR_PROPERTY_ID_HERE\",\n  \"isFreeMode\": true\n}"
+                },
+                "url": {
+                    "raw": "{{baseUrl}}/api/subscription-purchase/verify-payment",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "subscription-purchase",
+                        "verify-payment"
+                    ]
+                },
+                "description": "For FREE plans - no razorpay details needed, just propertyId and isFreeMode=true"
+            },
+            "response": []
+        },
+        {
+            "name": "4. Admin - Approve Property",
+            "request": {
+                "method": "PATCH",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{adminToken}}"
+                    }
+                ],
+                "url": {
+                    "raw": "{{baseUrl}}/property/properties/:id/approve",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "property",
+                        "properties",
+                        ":id",
+                        "approve"
+                    ],
+                    "variable": [
+                        {
+                            "key": "id",
+                            "value": "YOUR_PROPERTY_ID_HERE"
+                        }
+                    ]
+                },
+                "description": "Admin approves property. This also activates the subscription with startDate=now and calculates endDate."
+            },
+            "response": []
+        },
+        {
+            "name": "5. Admin - Reject Property",
+            "request": {
+                "method": "PATCH",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{adminToken}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"reason\": \"Property details are incomplete\"\n}"
+                },
+                "url": {
+                    "raw": "{{baseUrl}}/property/properties/:id/reject",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "property",
+                        "properties",
+                        ":id",
+                        "reject"
+                    ],
+                    "variable": [
+                        {
+                            "key": "id",
+                            "value": "YOUR_PROPERTY_ID_HERE"
+                        }
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "6. User - Renew Expired Property (NEW)",
+            "request": {
+                "method": "PATCH",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{userToken}}"
+                    }
+                ],
+                "url": {
+                    "raw": "{{baseUrl}}/property/properties/:id/renew",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "property",
+                        "properties",
+                        ":id",
+                        "renew"
+                    ],
+                    "variable": [
+                        {
+                            "key": "id",
+                            "value": "YOUR_EXPIRED_PROPERTY_ID_HERE"
+                        }
+                    ]
+                },
+                "description": "🆕 NEW ENDPOINT: User can renew expired property after purchasing new subscription. No admin approval needed."
+            },
+            "response": []
+        },
+        {
+            "name": "7. Get My Active Subscription",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{userToken}}"
+                    }
+                ],
+                "url": {
+                    "raw": "{{baseUrl}}/api/subscription-purchase/my-active",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "subscription-purchase",
+                        "my-active"
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "8. Get My Subscription History",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{userToken}}"
+                    }
+                ],
+                "url": {
+                    "raw": "{{baseUrl}}/api/subscription-purchase/my-history",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "subscription-purchase",
+                        "my-history"
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "9. Admin - Check User Subscription",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{adminToken}}"
+                    }
+                ],
+                "url": {
+                    "raw": "{{baseUrl}}/api/subscription-purchase/check-user/:userId",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "subscription-purchase",
+                        "check-user",
+                        ":userId"
+                    ],
+                    "variable": [
+                        {
+                            "key": "userId",
+                            "value": "USER_ID_HERE"
+                        }
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "10. Get All Subscription Packages",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/api/subscription?city=Noida",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "api",
+                        "subscription"
+                    ],
+                    "query": [
+                        {
+                            "key": "city",
+                            "value": "Noida"
+                        }
+                    ]
+                }
+            },
+            "response": []
+        }
+    ]
+}

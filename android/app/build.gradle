@@ -1,0 +1,197 @@
+apply plugin: "com.android.application"
+apply plugin: "org.jetbrains.kotlin.android"
+apply plugin: "com.facebook.react"
+apply from: "../../node_modules/react-native-vector-icons/fonts.gradle"
+// Apply Google Services plugin for Firebase
+apply plugin: "com.google.gms.google-services"
+
+// Load keystore properties
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('app/key.properties')
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+react {
+    // Automatically link all native modules
+    autolinkLibrariesWithApp()
+}
+
+// Fix the React Native Application Entry Point to use correct package name
+// This must run BEFORE compileDebugJavaWithJavac
+afterEvaluate {
+    tasks.matching { it.name == 'compileDebugJavaWithJavac' }.configureEach { task ->
+        task.doFirst {
+            def entryPointFile = file("build/generated/autolinking/src/main/java/com/facebook/react/ReactNativeApplicationEntryPoint.java")
+            if (entryPointFile.exists()) {
+                def content = entryPointFile.text
+                if (content.contains('com.kirayedar24.BuildConfig')) {
+                    content = content.replace('com.kirayedar24.BuildConfig', 'com.bhoomitechzone.kirayedar24.BuildConfig')
+                    entryPointFile.text = content
+                    println "Fixed ReactNativeApplicationEntryPoint.java package name"
+                }
+            }
+        }
+    }
+    tasks.matching { it.name == 'compileReleaseJavaWithJavac' }.configureEach { task ->
+        task.doFirst {
+            def entryPointFile = file("build/generated/autolinking/src/main/java/com/facebook/react/ReactNativeApplicationEntryPoint.java")
+            if (entryPointFile.exists()) {
+                def content = entryPointFile.text
+                if (content.contains('com.kirayedar24.BuildConfig')) {
+                    content = content.replace('com.kirayedar24.BuildConfig', 'com.bhoomitechzone.kirayedar24.BuildConfig')
+                    entryPointFile.text = content
+                    println "Fixed ReactNativeApplicationEntryPoint.java package name"
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Use ProGuard (R8) for Release builds if needed.
+ */
+def enableProguardInReleaseBuilds = false
+
+/**
+ * JavaScriptCore (JSC) for non-Hermes builds
+ */
+def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
+
+android {
+    namespace "com.bhoomitechzone.kirayedar24"
+
+    compileSdk rootProject.ext.compileSdkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
+    ndkVersion rootProject.ext.ndkVersion
+
+    defaultConfig {
+        applicationId "com.bhoomitechzone.kirayedar24"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 2
+        versionName "1.0.0"
+
+        // Needed for new Gradle plugin
+        multiDexEnabled true
+
+        // Build only for arm64-v8a to reduce build complexity and path length
+        ndk {
+            abiFilters "arm64-v8a"
+        }
+
+        // 🟢 DISABLED TEMPORARILY: Commented out to avoid path length issues on Windows
+        // externalNativeBuild {
+        //     cmake {
+        //         cppFlags "-std=c++20"
+        //         arguments "-DCMAKE_OBJECT_PATH_MAX=300"
+        //     }
+        // }
+    }
+
+    signingConfigs {
+        debug {
+            storeFile file("debug.keystore")
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
+        }
+        release {
+            if (keystoreProperties['storeFile'] != null) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            } else {
+                // Fallback to debug keystore for development
+                storeFile file("debug.keystore")
+                storePassword "android"
+                keyAlias "androiddebugkey"
+                keyPassword "android"
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+            matchingFallbacks = ['release', 'debug']
+        }
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled enableProguardInReleaseBuilds
+            shrinkResources enableProguardInReleaseBuilds
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+
+            // Required for release variant matching
+            matchingFallbacks = ['release', 'debug']
+            
+            // Use shorter build directory
+            externalNativeBuild {
+                cmake {
+                    targets "appmodules"
+                    arguments "-DCMAKE_BUILD_DIR=C:/tmp/rn_build"
+                }
+            }
+        }
+    }
+
+    packagingOptions {
+        resources {
+            excludes += [
+                "META-INF/LICENSE",
+                "META-INF/LICENSE.txt",
+                "META-INF/NOTICE",
+                "META-INF/NOTICE.txt",
+                "META-INF/*.kotlin_module"
+            ]
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+}
+
+configurations.all {
+    resolutionStrategy {
+        // Force all support libraries to use AndroidX
+        force 'androidx.core:core:1.16.0'
+        
+        // Exclude old Android Support libraries
+        exclude group: 'com.android.support', module: 'support-compat'
+        exclude group: 'com.android.support', module: 'support-v4'
+        exclude group: 'com.android.support', module: 'support-core-utils'
+    }
+}
+
+dependencies {
+    // React Native core
+    implementation("com.facebook.react:react-android")
+    
+    // Google Play Services Location
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("com.google.android.gms:play-services-base:18.5.0")
+
+    // JavaScript engine
+    if (project.hasProperty("hermesEnabled") && hermesEnabled.toBoolean()) {
+        implementation("com.facebook.react:hermes-android")
+    } else {
+        implementation jscFlavor
+    }
+
+    // MultiDex (required for large apps)
+    implementation("androidx.multidex:multidex:2.0.1")
+    
+    // Firebase dependencies
+    implementation platform("com.google.firebase:firebase-bom:32.7.0")
+    implementation("com.google.firebase:firebase-messaging")
+    
+    // Force AndroidX Core for compatibility
+    implementation("androidx.core:core:1.16.0")
+}

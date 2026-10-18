@@ -1,0 +1,1651 @@
+import React, { useState, useEffect, useMemo, useCallback } from "react";
+import {
+    View,
+    Text,
+    StyleSheet,
+    TouchableOpacity,
+    Image,
+    ScrollView,
+    Dimensions,
+    ActivityIndicator,
+    Alert,
+    RefreshControl,
+    StatusBar,
+    Modal,
+    TextInput,
+    Linking,
+    Pressable,
+    DeviceEventEmitter,
+} from "react-native";
+import { SafeAreaView } from 'react-native-safe-area-context';
+import Icon from "react-native-vector-icons/Ionicons";
+import LinearGradient from "react-native-linear-gradient";
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getRecentProperties, getResidentialProperties, getCommercialProperties } from '../services/propertyService';
+import propertyService from '../services/propertyapi';
+import MediaCard from '../components/MediaCard';
+import ContactPreferenceIcons from '../components/ContactPreferenceIcons';
+import { useSubscription } from '../context/SubscriptionContext';
+import SubscriptionModal from '../components/SubscriptionModal';
+
+// Helper functions for property data formatting
+const formatImageUrl = (url) => {
+    if (!url) return null;
+    
+    // If it's already a full URL, return as is
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url;
+    }
+    
+    // If it's a relative path from API (like "uploads/filename.jpg"), make it absolute
+    if (url.startsWith('uploads/')) {
+        return `https://backend.kirayedar24.com/${url}`;
+    }
+    
+    // For other relative paths, add base URL
+    return url.startsWith('/') ? `https://backend.kirayedar24.com${url}` : `https://backend.kirayedar24.com/${url}`;
+};
+
+const formatPrice = (price) => {
+    if (!price) return '₹0';
+    const numPrice = typeof price === 'string' ? parseFloat(price) : price;
+    if (isNaN(numPrice)) return '₹0';
+    
+    if (numPrice >= 10000000) return `₹${(numPrice / 10000000).toFixed(1)}Cr`;
+    if (numPrice >= 100000) return `₹${(numPrice / 100000).toFixed(1)}L`;
+    if (numPrice >= 1000) return `₹${(numPrice / 1000).toFixed(1)}K`;
+    return `₹${numPrice}`;
+};
+
+const getFirstImageUrl = (property) => {
+    // Accept either a property object or a media array
+    if (!property) return null;
+
+    // If property has a photos array (newer backend), prefer that
+    if (Array.isArray(property.photos) && property.photos.length > 0) {
+        return property.photos[0];
+    }
+
+    // If property has photosAndVideo, search for the first image
+    const photosAndVideo = Array.isArray(property.photosAndVideo) ? property.photosAndVideo : (Array.isArray(property.photosAndVideo || property.photos) ? (property.photosAndVideo || property.photos) : null);
+
+    if (Array.isArray(photosAndVideo) && photosAndVideo.length > 0) {
+        const firstImage = photosAndVideo.find(media => {
+            const mediaPath = media && (media.uri || media);
+            return mediaPath && (mediaPath.includes('.jpg') || mediaPath.includes('.jpeg') || 
+                mediaPath.includes('.png') || mediaPath.includes('.webp') || mediaPath.includes('.gif'));
+        });
+
+        if (firstImage) return firstImage.uri || firstImage;
+        return photosAndVideo[0].uri || photosAndVideo[0];
+    }
+
+    // If property has images array
+    if (Array.isArray(property.images) && property.images.length > 0) {
+        return property.images[0];
+    }
+
+    // If single image field
+    if (property.image) return property.image;
+
+    return null;
+};
+
+const getDisplayLocation = (property) => {
+    if (!property) return 'Unknown Location';
+
+    // Prefer nested address object if available
+    if (property.address && typeof property.address === 'object') {
+        const { locality, city, state, pincode } = property.address;
+        const parts = [locality, city, state, pincode].filter(Boolean);
+        if (parts.length) return parts.join(', ');
+    }
+
+    // Fallback to flat fields
+    const flatParts = [property.locality, property.city, property.state, property.pincode].filter(Boolean);
+    if (flatParts.length) return flatParts.join(', ');
+
+    // Fallback to propertyLocation string
+    if (property.propertyLocation) return property.propertyLocation;
+
+    // As last resort, check for address string
+    if (property.address && typeof property.address === 'string') return property.address;
+
+    return 'Unknown Location';
+};
+
+const getSavedPropertiesIds = async () => {
+    try {
+        const saved = await AsyncStorage.getItem('savedProperties');
+        return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+        return [];
+    }
+};
+
+const getMySellProperties = async () => {
+    try {
+        // This can be implemented later when user properties API is available
+        return [];
+    } catch (e) {
+        return [];
+    }
+}; 
+
+// --- Theme & Layout Constants (Enhanced with modern design) ---
+const { width, height } = Dimensions.get("window");
+
+const theme = {
+    COLORS: {
+        primary: "#FDB022",
+        primaryDark: "#E89E0F",
+        background: "#EFEEE9",
+        white: "#FFFFFF",
+        black: "#1A1A1A",
+        greyLight: "#F5F6F8",
+        greyMedium: "#6B7280",
+        greyDark: "#374151",
+        accent: "#FF6B6B",
+        success: "#10B981",
+        warning: "#F59E0B",
+        star: "#FFC107",
+        overlay: "rgba(0,0,0,0.4)",
+        shadow: "rgba(0,0,0,0.1)",
+    },
+    SPACING: { xs: 4, s: 8, m: 16, l: 20, xl: 24, xxl: 32 }, 
+    FONT_SIZES: { 
+        caption: 11, 
+        small: 12, 
+        body: 14, 
+        subheading: 16, 
+        heading: 18, 
+        title: 22, 
+        largeTitle: 26 
+    },
+    RADIUS: { s: 8, m: 12, l: 16, xl: 20, full: 999 }, 
+    FONT_WEIGHTS: {
+        light: '300',
+        regular: '400',
+        medium: '500',
+        semibold: '600',
+        bold: '700',
+        heavy: '800',
+    }
+};
+
+// Calculate card width for 2 columns with proper spacing
+const HORIZONTAL_MARGIN = theme.SPACING.l;
+const CARD_MARGIN = theme.SPACING.m;
+const CARD_WIDTH = (width - (HORIZONTAL_MARGIN * 2) - CARD_MARGIN) / 2;
+
+// Fallback image for properties without images
+const FALLBACK_IMAGE_URI = 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?w=800&h=600&fit=crop&crop=center';
+
+const AllPropertiesScreen = ({ navigation, route }) => {
+    // Route parameters
+    const category = route.params?.category; // 'Featured', 'Recent', 'Nearby'
+    const searchQuery = route.params?.query; // Search query from the home screen
+
+    // Subscription context
+    const { userHasPackage, setPropertyForSubscription, loadActiveSubscription } = useSubscription();
+    const [showSubscriptionModal, setShowSubscriptionModal] = useState(false);
+
+    // State management
+    const [allProperties, setAllProperties] = useState([]);
+    const [filteredProperties, setFilteredProperties] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
+    const [error, setError] = useState(null);
+    const [favorites, setFavorites] = useState([]);
+    const [loadingSaveProperty, setLoadingSaveProperty] = useState(null);
+    
+    // Filter state
+    const [showFilterModal, setShowFilterModal] = useState(false);
+    const [filters, setFilters] = useState({
+        propertyType: '',
+        purpose: '',
+        minPrice: '',
+        maxPrice: '',
+        location: '',
+    });
+    const [activeFiltersCount, setActiveFiltersCount] = useState(0);
+    const [userRole, setUserRole] = useState(null);
+
+    // Load user role on mount
+    useEffect(() => {
+        const loadUserRole = async () => {
+            try {
+                const role = await AsyncStorage.getItem('userRole');
+                setUserRole(role);
+                console.log('[AllPropertiesScreen] User role loaded:', role);
+            } catch (error) {
+                console.warn('Error loading user role:', error);
+            }
+        };
+        loadUserRole();
+    }, []);
+
+    // Enhanced title calculation
+    const screenTitle = useMemo(() => {
+        if (category === 'Featured') return 'Featured Estates';
+        if (category === 'Recent') return 'Recent Estates';
+        if (category === 'Nearby') return 'Nearby Properties';
+        if (category === 'Residential') return 'Residential Properties';
+        if (category === 'Commercial') return 'Commercial Properties';
+        if (searchQuery) return `Search Results`;
+        return 'All Properties';
+    }, [category, searchQuery]);
+
+    // Filter property types and purposes for dropdowns
+    const propertyTypes = ['House', 'Apartment', 'Villa', 'Plot', 'Commercial', 'Office'];
+    const purposes = ['Sale', 'Rent', 'Lease'];
+    
+    // Predefined price ranges for quick selection
+    const priceRanges = [
+        { label: 'Under ₹10L', min: '0', max: '1000000' },
+        { label: '₹10L - ₹25L', min: '1000000', max: '2500000' },
+        { label: '₹25L - ₹50L', min: '2500000', max: '5000000' },
+        { label: '₹50L - ₹1Cr', min: '5000000', max: '10000000' },
+        { label: 'Above ₹1Cr', min: '10000000', max: '' },
+    ];
+
+    // Apply filters to properties
+    const applyFilters = useCallback((properties) => {
+        let filtered = [...properties];
+
+        if (filters.propertyType) {
+            filtered = filtered.filter(item => 
+                item.propertyType?.toLowerCase().includes(filters.propertyType.toLowerCase())
+            );
+        }
+
+        if (filters.purpose) {
+            filtered = filtered.filter(item => 
+                item.purpose?.toLowerCase().includes(filters.purpose.toLowerCase())
+            );
+        }
+
+        if (filters.location) {
+            filtered = filtered.filter(item => 
+                item.propertyLocation?.toLowerCase().includes(filters.location.toLowerCase())
+            );
+        }
+
+        if (filters.minPrice) {
+            const minPrice = parseFloat(filters.minPrice);
+            filtered = filtered.filter(item => {
+                const price = parseFloat(item.price) || 0;
+                return price >= minPrice;
+            });
+        }
+
+        if (filters.maxPrice) {
+            const maxPrice = parseFloat(filters.maxPrice);
+            filtered = filtered.filter(item => {
+                const price = parseFloat(item.price) || 0;
+                return price <= maxPrice;
+            });
+        }
+
+        return filtered;
+    }, [filters]);
+
+    // Count active filters
+    useEffect(() => {
+        const count = Object.values(filters).filter(value => value && value.toString().trim() !== '').length;
+        setActiveFiltersCount(count);
+    }, [filters]);
+
+    // Apply filters when data or filters change
+    useEffect(() => {
+        const filtered = applyFilters(allProperties);
+        setFilteredProperties(filtered);
+    }, [allProperties, applyFilters]);
+
+    // Load favorites from API (like HomeScreen)
+    const loadFavorites = useCallback(async () => {
+        try {
+            const response = await propertyService.getSavedProperties();
+            if (response.success && response.savedProperties && Array.isArray(response.savedProperties)) {
+                const savedIds = response.savedProperties
+                    .filter(p => p !== null && p !== undefined)
+                    .map(p => p._id || p.id)
+                    .filter(Boolean);
+                setFavorites(savedIds);
+                console.log('✅ Loaded saved properties:', savedIds.length);
+            }
+        } catch (error) {
+            console.error('Error loading saved properties:', error);
+        }
+    }, []);
+
+    // Enhanced data loading with better error handling and performance
+    const loadAllData = useCallback(async (isRefresh = false) => {
+        if (!isRefresh) setIsLoading(true);
+        setError(null);
+        
+        try {
+            let propertyData = [];
+            let response;
+            
+            // Load properties from appropriate API based on category
+            if (category === 'Residential') {
+                console.log('📱 Loading Residential properties from API');
+                response = await getResidentialProperties();
+            } else if (category === 'Commercial') {
+                console.log('📱 Loading Commercial properties from API');
+                response = await getCommercialProperties();
+            } else {
+                // Featured or default - load all properties
+                console.log('📱 Loading all properties (Featured) from API');
+                response = await getRecentProperties();
+            }
+            
+            // Handle the API response properly
+            if (response.success && response.data && Array.isArray(response.data)) {
+                propertyData = response.data;
+            } else if (Array.isArray(response)) {
+                // Fallback if response is directly an array
+                propertyData = response;
+            } else {
+                console.log('Unexpected API response format:', response);
+                propertyData = [];
+            }
+
+            // Filter only approved properties (same as HomeScreen)
+            const approvedProperties = propertyData.filter(p => 
+                p.status === 'approved' || p.approvalStatus === 'Approved'
+            );
+            console.log('✅ Approved properties:', approvedProperties.length, 'out of', propertyData.length);
+            propertyData = approvedProperties;
+
+            // Enhanced search filtering
+            if (searchQuery && searchQuery.trim()) {
+                const queryLower = searchQuery.toLowerCase().trim();
+                propertyData = propertyData.filter(item => {
+                    const description = (item.description || '').toLowerCase();
+                    const location = (item.propertyLocation || '').toLowerCase();
+                    const type = (item.propertyType || '').toLowerCase();
+                    const purpose = (item.purpose || '').toLowerCase();
+                    
+                    return description.includes(queryLower) ||
+                           location.includes(queryLower) ||
+                           type.includes(queryLower) ||
+                           purpose.includes(queryLower);
+                });
+            }
+            
+            console.log('Loaded properties count:', propertyData.length);
+            setAllProperties(Array.isArray(propertyData) ? propertyData : []);
+            
+        } catch (e) {
+            console.error("Enhanced API Fetch Error:", e);
+            setError(e.message || "Failed to load properties. Please try again.");
+        } finally {
+            setIsLoading(false);
+            setIsRefreshing(false);
+        }
+    }, [category, searchQuery]);
+
+    // Clear all filters
+    const clearFilters = useCallback(() => {
+        setFilters({
+            propertyType: '',
+            purpose: '',
+            minPrice: '',
+            maxPrice: '',
+            location: '',
+        });
+        setShowFilterModal(false);
+    }, []);
+
+    // Apply filters and close modal
+    const applyAndCloseFilters = useCallback(() => {
+        setShowFilterModal(false);
+    }, []);
+
+    // Select predefined price range
+    const selectPriceRange = useCallback((range) => {
+        setFilters(prev => ({
+            ...prev,
+            minPrice: range.min,
+            maxPrice: range.max
+        }));
+    }, []);
+
+    // Initialize data and favorites on mount
+    useEffect(() => {
+        loadAllData();
+        loadFavorites();
+    }, []);  // Remove dependencies to prevent infinite loops
+
+    // Listen for screen focus and reload favorites
+    useEffect(() => {
+        const unsubscribe = navigation.addListener('focus', () => {
+            console.log('📱 AllPropertiesScreen focused - reloading favorites');
+            loadFavorites();
+        });
+
+        return unsubscribe;
+    }, [navigation, loadFavorites]);
+
+    // Listen for saved property updates from other screens
+    useEffect(() => {
+        const listener = DeviceEventEmitter.addListener('savedListUpdated', (event) => {
+            if (event.action === 'removed') {
+                setFavorites(prev => prev.filter(id => id !== event.propertyId));
+            } else if (event.action === 'added') {
+                setFavorites(prev => [...prev, event.propertyId]);
+            }
+        });
+
+        return () => listener.remove();
+    }, []);
+
+    // Enhanced refresh handler
+    const onRefresh = useCallback(() => {
+        setIsRefreshing(true);
+        Promise.all([
+            loadAllData(true),
+            loadFavorites()
+        ]);
+    }, [loadAllData, loadFavorites]);
+
+    // Enhanced favorite toggle with API calls (same as HomeScreen)
+    const toggleFavorite = useCallback(async (propertyId) => {
+        if (loadingSaveProperty === propertyId) return; // Prevent multiple clicks
+        
+        const isCurrentlySaved = favorites.includes(propertyId);
+        setLoadingSaveProperty(propertyId);
+        
+        try {
+            let response;
+            if (isCurrentlySaved) {
+                // Remove from saved
+                response = await propertyService.removeSavedProperty(propertyId);
+                if (response.success) {
+                    setFavorites((prev) => prev.filter((f) => f !== propertyId));
+                    DeviceEventEmitter.emit('savedListUpdated', { propertyId, action: 'removed' });
+                } else {
+                    Alert.alert('Error', response.message || 'Failed to remove property from saved list');
+                }
+            } else {
+                // Save property
+                response = await propertyService.saveProperty(propertyId);
+                if (response.success) {
+                    setFavorites((prev) => [...prev, propertyId]);
+                    DeviceEventEmitter.emit('savedListUpdated', { propertyId, action: 'added' });
+                } else {
+                    Alert.alert('Error', response.message || 'Failed to save property');
+                }
+            }
+        } catch (error) {
+            console.error('Toggle favorite error:', error);
+            Alert.alert('Error', 'Something went wrong. Please try again.');
+        } finally {
+            setLoadingSaveProperty(null);
+        }
+    }, [favorites, loadingSaveProperty]);
+
+    // Enhanced property navigation
+    const openProperty = useCallback(async (item) => {
+        // Check if user is Owner - Owners don't need package to view properties
+        const isOwner = userRole === 'Owner' || userRole === 'owner';
+        
+        // Only check subscription for Tenants (non-owners)
+        if (!isOwner && !userHasPackage) {
+            setPropertyForSubscription(item);
+            setShowSubscriptionModal(true);
+            return;
+        }
+        
+        // User has subscription OR is Owner, navigate to details
+        navigation.navigate('PropertyDetailsScreen', { property: item });
+    }, [navigation, userHasPackage, setPropertyForSubscription, userRole]);
+
+    // Property action handlers
+    const handlePhoneCall = useCallback((property) => {
+        const phoneNumber = property.contactNumber || property.phoneNumber || property.ownerPhone || '1234567890';
+        const phoneUrl = `tel:${phoneNumber}`;
+        Linking.openURL(phoneUrl).catch((err) => {
+            console.error('Error opening phone dialer:', err);
+            Alert.alert('Error', 'Could not open phone dialer');
+        });
+    }, []);
+
+    const handleWhatsApp = useCallback((property) => {
+        const phoneNumber = property.contactNumber || property.phoneNumber || property.ownerPhone || '1234567890';
+        const message = encodeURIComponent(`Hi, I'm interested in your property: ${property.description || property.title || 'Property'}`);
+        const whatsappUrl = `whatsapp://send?phone=+91${phoneNumber}&text=${message}`;
+        Linking.openURL(whatsappUrl).catch((err) => {
+            console.error('Error opening WhatsApp:', err);
+            Alert.alert('Error', 'WhatsApp is not installed or could not be opened');
+        });
+    }, []);
+
+    const handlePropertyChat = useCallback(async (property) => {
+        try {
+            // Navigate to chat with property owner
+            const ownerId = property.ownerId || property.userId || property.postedBy?._id || property.postedBy;
+            
+            if (!ownerId) {
+                console.warn('No owner ID found for property:', property._id);
+                Alert.alert('Error', 'Unable to start chat - owner information not available');
+                return;
+            }
+            
+            console.log('Starting chat with owner:', ownerId);
+            navigation.navigate('ChatDetailScreen', { 
+                user: {
+                    _id: ownerId,
+                    fullName: property.ownerName || property.postedBy?.fullName || 'Property Owner',
+                },
+                propertyId: property._id || property.id,
+                propertyTitle: property.description || property.title || 'Property',
+            });
+        } catch (error) {
+            console.error('Error starting chat:', error);
+            Alert.alert('Error', 'Unable to start chat. Please try again.');
+        }
+    }, [navigation]);
+
+    // Property card with home screen residential card layout
+    const renderPropertyCard = useCallback((item, index) => {
+        const firstImage = getFirstImageUrl(item);
+        const imageUrl = formatImageUrl(firstImage) || FALLBACK_IMAGE_URI;
+        const isFavorite = favorites.includes(item._id);
+        
+        // Prepare media items for MediaCard (same as home screen)
+        const sourceMedia = (Array.isArray(item.photos) && item.photos.length > 0)
+            ? item.photos
+            : (Array.isArray(item.photosAndVideo) && item.photosAndVideo.length > 0)
+                ? item.photosAndVideo
+                : (Array.isArray(item.images) && item.images.length > 0)
+                    ? item.images
+                    : [{ uri: imageUrl }];
+
+        const mediaItems = sourceMedia.map(media => {
+            const originalUri = (typeof media === 'string') ? media : (media.uri || media);
+            const formattedUri = formatImageUrl(originalUri);
+            const isVideo = originalUri && (originalUri.includes('.mp4') || originalUri.includes('.mov') || originalUri.includes('.avi'));
+            return {
+                uri: formattedUri || originalUri,
+                type: media.type || (isVideo ? 'video' : 'image')
+            };
+        });
+        
+        return (
+            <View
+                key={item._id || index}
+                style={styles.residentialCard}
+                pointerEvents="box-none"
+            >
+                {/* Card Content - TouchableOpacity for navigation */}
+                <TouchableOpacity
+                    style={{ flex: 1 }}
+                    onPress={() => openProperty(item)}
+                    activeOpacity={0.9}
+                    pointerEvents="auto"
+                >
+                    {/* Property Image Container */}
+                    <View style={styles.residentialImageContainer}>
+                        <MediaCard
+                            mediaItems={mediaItems}
+                            fallbackImage={FALLBACK_IMAGE_URI}
+                            imageStyle={styles.residentialImage}
+                            showControls={false}
+                            autoPlay={false}
+                            style={styles.residentialMediaCard}
+                        />
+                    </View>
+
+                    {/* Property Details */}
+                    <View style={styles.residentialDetails}>
+                        {/* Title */}
+                        <Text style={styles.residentialTitle} numberOfLines={1}>
+                            {item.description || 'Property Name'}
+                        </Text>
+
+                        {/* Location */}
+                        <View style={styles.residentialLocation}>
+                            <Icon name="location-outline" size={13} color="#64748B" />
+                            <Text style={styles.residentialLocationText} numberOfLines={1}>
+                                {getDisplayLocation(item)}
+                            </Text>
+                        </View>
+                    </View>
+                </TouchableOpacity>
+
+                {/* Favorite Button - Positioned absolutely to be outside the navigation touch area */}
+                <Pressable 
+                    onPress={() => toggleFavorite(item._id)}
+                    style={({ pressed }) => [
+                        styles.residentialFavoriteIcon,
+                        pressed && { opacity: 0.6 }
+                    ]}
+                    pointerEvents="auto"
+                    disabled={loadingSaveProperty === item._id}
+                >
+                    {loadingSaveProperty === item._id ? (
+                        <ActivityIndicator size="small" color="#EF4444" />
+                    ) : (
+                        <Icon
+                            name={isFavorite ? "heart" : "heart-outline"}
+                            size={20}
+                            color={isFavorite ? "#EF4444" : "#64748B"}
+                        />
+                    )}
+                </Pressable>
+            </View>
+        );
+    }, [favorites, openProperty, toggleFavorite, handlePhoneCall, handleWhatsApp, handlePropertyChat]);
+
+    return (
+        <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+            <StatusBar barStyle="dark-content" backgroundColor={theme.COLORS.white} translucent={false} />
+            
+            {/* Enhanced Header */}
+            <View style={styles.header}>
+                <TouchableOpacity 
+                    onPress={() => navigation.goBack()} 
+                    style={styles.backButton}
+                    activeOpacity={0.7}
+                >
+                    <Icon name="chevron-back" size={24} color={theme.COLORS.black} />
+                </TouchableOpacity>
+                
+                <View style={styles.headerCenter}>
+                    <Text style={styles.headerTitle} numberOfLines={1}>{screenTitle}</Text>
+                    {searchQuery && (
+                        <Text style={styles.headerSubtitle} numberOfLines={1}>
+                            "{searchQuery}"
+                        </Text>
+                    )}
+                </View>
+                
+                <View style={styles.headerRight}>
+                    <TouchableOpacity 
+                        style={[styles.filterButton, activeFiltersCount > 0 && styles.filterButtonActive]} 
+                        activeOpacity={0.7}
+                        onPress={() => setShowFilterModal(true)}
+                    >
+                        <Icon name="options-outline" size={20} color={activeFiltersCount > 0 ? theme.COLORS.white : theme.COLORS.greyDark} />
+                        {activeFiltersCount > 0 && (
+                            <View style={styles.filterBadge}>
+                                <Text style={styles.filterBadgeText}>{activeFiltersCount}</Text>
+                            </View>
+                        )}
+                    </TouchableOpacity>
+                </View>
+            </View>
+            
+            {/* Enhanced Loading State */}
+            {isLoading && (
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color={theme.COLORS.primary} />
+                    <Text style={styles.loadingText}>Loading properties...</Text>
+                </View>
+            )}
+
+            {/* Enhanced Error State */}
+            {!isLoading && error && (
+                <View style={styles.centerMessage}>
+                    <Icon name="warning-outline" size={48} color={theme.COLORS.warning} />
+                    <Text style={styles.errorTitle}>Oops! Something went wrong</Text>
+                    <Text style={styles.errorText}>{error}</Text>
+                    <TouchableOpacity onPress={() => loadAllData()} style={styles.retryButton}>
+                        <LinearGradient 
+                            colors={[theme.COLORS.primary, theme.COLORS.primaryDark]}
+                            style={styles.retryGradient}
+                        >
+                            <Text style={styles.retryButtonText}>Try Again</Text>
+                        </LinearGradient>
+                    </TouchableOpacity>
+                </View>
+            )}
+
+            {/* Enhanced Empty State */}
+            {!isLoading && !error && filteredProperties.length === 0 && allProperties.length > 0 && (
+                <View style={styles.centerMessage}>
+                    <Icon name="funnel-outline" size={64} color={theme.COLORS.greyMedium} />
+                    <Text style={styles.emptyTitle}>No Matching Properties</Text>
+                    <Text style={styles.emptyText}>
+                        Try adjusting your filters to see more results
+                    </Text>
+                    <TouchableOpacity 
+                        onPress={clearFilters} 
+                        style={styles.clearFiltersButton}
+                    >
+                        <Text style={styles.clearFiltersText}>Clear Filters</Text>
+                    </TouchableOpacity>
+                </View>
+            )}
+
+            {!isLoading && !error && allProperties.length === 0 && (
+                <View style={styles.centerMessage}>
+                    <Icon name="home-outline" size={64} color={theme.COLORS.greyMedium} />
+                    <Text style={styles.emptyTitle}>No Properties Found</Text>
+                    <Text style={styles.emptyText}>
+                        {searchQuery 
+                            ? `No properties match your search for "${searchQuery}"`
+                            : "No properties available at the moment"
+                        }
+                    </Text>
+                    {searchQuery && (
+                        <TouchableOpacity 
+                            onPress={() => navigation.goBack()} 
+                            style={styles.backToHomeButton}
+                        >
+                            <Text style={styles.backToHomeText}>Back to Home</Text>
+                        </TouchableOpacity>
+                    )}
+                </View>
+            )}
+
+            {/* Enhanced Properties Grid */}
+            {!isLoading && !error && filteredProperties.length > 0 && (
+                <ScrollView 
+                    style={styles.scrollView}
+                    contentContainerStyle={styles.scrollContent}
+                    showsVerticalScrollIndicator={false}
+                    refreshControl={
+                        <RefreshControl
+                            refreshing={isRefreshing}
+                            onRefresh={onRefresh}
+                            tintColor={theme.COLORS.primary}
+                            colors={[theme.COLORS.primary]}
+                        />
+                    }
+                >
+                    {/* Results Header */}
+                    <View style={styles.resultsHeader}>
+                        <Text style={styles.resultsCount}>
+                            {filteredProperties.length} {filteredProperties.length === 1 ? 'Property' : 'Properties'} Found
+                        </Text>
+                        {category === 'Recent' && (
+                            <Text style={styles.resultsSubtext}>
+                                Including your recent posts
+                            </Text>
+                        )}
+                        {activeFiltersCount > 0 && (
+                            <View style={styles.activeFiltersRow}>
+                                <Text style={styles.activeFiltersText}>
+                                    {activeFiltersCount} filter{activeFiltersCount > 1 ? 's' : ''} applied
+                                </Text>
+                                <TouchableOpacity onPress={clearFilters}>
+                                    <Text style={styles.clearFiltersLink}>Clear All</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+                    </View>
+
+                    {/* Properties List */}
+                    <View style={styles.listContainer}>
+                        {filteredProperties.map((item, index) => renderPropertyCard(item, index))}
+                    </View>
+                    
+                    {/* Enhanced Footer */}
+                    <View style={styles.footer}>
+                        <Text style={styles.footerText}>
+                            Showing {filteredProperties.length} of {allProperties.length} results
+                        </Text>
+                        <Text style={styles.footerSubtext}>
+                            Pull down to refresh
+                        </Text>
+                    </View>
+                </ScrollView>
+            )}
+
+            {/* Filter Modal */}
+            <Modal
+                visible={showFilterModal}
+                animationType="slide"
+                transparent={true}
+                onRequestClose={() => setShowFilterModal(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContainer}>
+                        {/* Modal Header */}
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Filter Properties</Text>
+                            <TouchableOpacity 
+                                onPress={() => setShowFilterModal(false)}
+                                style={styles.modalCloseButton}
+                            >
+                                <Icon name="close" size={24} color={theme.COLORS.greyDark} />
+                            </TouchableOpacity>
+                        </View>
+
+                        <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
+                            {/* Property Type Filter */}
+                            <View style={styles.filterSection}>
+                                <Text style={styles.filterLabel}>Property Type</Text>
+                                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterOptions}>
+                                    {propertyTypes.map((type) => (
+                                        <TouchableOpacity
+                                            key={type}
+                                            style={[
+                                                styles.filterChip,
+                                                filters.propertyType === type && styles.filterChipActive
+                                            ]}
+                                            onPress={() => setFilters(prev => ({
+                                                ...prev,
+                                                propertyType: prev.propertyType === type ? '' : type
+                                            }))}
+                                        >
+                                            <Text style={[
+                                                styles.filterChipText,
+                                                filters.propertyType === type && styles.filterChipTextActive
+                                            ]}>
+                                                {type}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </ScrollView>
+                            </View>
+
+                            {/* Purpose Filter */}
+                            <View style={styles.filterSection}>
+                                <Text style={styles.filterLabel}>Purpose</Text>
+                                <View style={styles.filterRow}>
+                                    {purposes.map((purpose) => (
+                                        <TouchableOpacity
+                                            key={purpose}
+                                            style={[
+                                                styles.filterChip,
+                                                filters.purpose === purpose && styles.filterChipActive
+                                            ]}
+                                            onPress={() => setFilters(prev => ({
+                                                ...prev,
+                                                purpose: prev.purpose === purpose ? '' : purpose
+                                            }))}
+                                        >
+                                            <Text style={[
+                                                styles.filterChipText,
+                                                filters.purpose === purpose && styles.filterChipTextActive
+                                            ]}>
+                                                {purpose}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
+                            </View>
+
+                            {/* Price Range Filter */}
+                            <View style={styles.filterSection}>
+                                <Text style={styles.filterLabel}>Price Range (₹)</Text>
+                                
+                                {/* Quick Price Range Selection */}
+                                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterOptions}>
+                                    {priceRanges.map((range, index) => {
+                                        const isSelected = filters.minPrice === range.min && filters.maxPrice === range.max;
+                                        return (
+                                            <TouchableOpacity
+                                                key={index}
+                                                style={[
+                                                    styles.filterChip,
+                                                    isSelected && styles.filterChipActive
+                                                ]}
+                                                onPress={() => selectPriceRange(range)}
+                                            >
+                                                <Text style={[
+                                                    styles.filterChipText,
+                                                    isSelected && styles.filterChipTextActive
+                                                ]}>
+                                                    {range.label}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </ScrollView>
+
+                                {/* Custom Price Range Inputs */}
+                                <Text style={styles.customPriceLabel}>Or set custom range:</Text>
+                                <View style={styles.priceInputContainer}>
+                                    <View style={styles.priceInputWrapper}>
+                                        <Text style={styles.priceInputLabel}>Min Price</Text>
+                                        <TextInput
+                                            style={styles.priceInput}
+                                            placeholder="0"
+                                            value={filters.minPrice}
+                                            onChangeText={(text) => setFilters(prev => ({ ...prev, minPrice: text }))}
+                                            keyboardType="numeric"
+                                            placeholderTextColor={theme.COLORS.greyMedium}
+                                        />
+                                    </View>
+                                    <Text style={styles.priceInputSeparator}>to</Text>
+                                    <View style={styles.priceInputWrapper}>
+                                        <Text style={styles.priceInputLabel}>Max Price</Text>
+                                        <TextInput
+                                            style={styles.priceInput}
+                                            placeholder="Any"
+                                            value={filters.maxPrice}
+                                            onChangeText={(text) => setFilters(prev => ({ ...prev, maxPrice: text }))}
+                                            keyboardType="numeric"
+                                            placeholderTextColor={theme.COLORS.greyMedium}
+                                        />
+                                    </View>
+                                </View>
+                            </View>
+
+                            {/* Location Filter */}
+                            <View style={styles.filterSection}>
+                                <Text style={styles.filterLabel}>Location</Text>
+                                <TextInput
+                                    style={styles.locationInput}
+                                    placeholder="Enter location..."
+                                    value={filters.location}
+                                    onChangeText={(text) => setFilters(prev => ({ ...prev, location: text }))}
+                                    placeholderTextColor={theme.COLORS.greyMedium}
+                                />
+                            </View>
+                        </ScrollView>
+
+                        {/* Modal Footer */}
+                        <View style={styles.modalFooter}>
+                            <TouchableOpacity
+                                style={styles.clearButton}
+                                onPress={clearFilters}
+                            >
+                                <Text style={styles.clearButtonText}>Clear All</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.applyButton}
+                                onPress={applyAndCloseFilters}
+                            >
+                                <LinearGradient
+                                    colors={[theme.COLORS.primary, theme.COLORS.primaryDark]}
+                                    style={styles.applyGradient}
+                                >
+                                    <Text style={styles.applyButtonText}>Apply Filters</Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Subscription Modal */}
+            <SubscriptionModal 
+                visible={showSubscriptionModal}
+                onClose={() => setShowSubscriptionModal(false)}
+                onSuccess={() => {
+                    setShowSubscriptionModal(false);
+                    // Refresh subscription status
+                    loadActiveSubscription();
+                }}
+            />
+        </SafeAreaView>
+    );
+};
+
+// --- Enhanced Modern Styles ---
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+        backgroundColor: theme.COLORS.background,
+    },
+    
+    // Enhanced Header Styles
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: theme.SPACING.l,
+        paddingVertical: theme.SPACING.m,
+        backgroundColor: '#EFEEE9',
+        borderBottomWidth: 1,
+        borderBottomColor: '#D8D5CB',
+        elevation: 2,
+        shadowColor: theme.COLORS.shadow,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+    },
+    backButton: {
+        padding: theme.SPACING.s,
+        borderRadius: theme.RADIUS.full,
+        backgroundColor: theme.COLORS.greyLight,
+    },
+    headerCenter: {
+        flex: 1,
+        marginHorizontal: theme.SPACING.m,
+    },
+    headerTitle: {
+        fontSize: theme.FONT_SIZES.title,
+        fontWeight: theme.FONT_WEIGHTS.bold,
+        color: theme.COLORS.black,
+        textAlign: 'center',
+    },
+    headerSubtitle: {
+        fontSize: theme.FONT_SIZES.body,
+        color: theme.COLORS.greyMedium,
+        textAlign: 'center',
+        marginTop: theme.SPACING.xs,
+        fontStyle: 'italic',
+    },
+    headerRight: {
+        width: 40,
+        alignItems: 'flex-end',
+    },
+    filterButton: {
+        padding: theme.SPACING.s,
+        borderRadius: theme.RADIUS.s,
+        backgroundColor: theme.COLORS.greyLight,
+        position: 'relative',
+    },
+    filterButtonActive: {
+        backgroundColor: theme.COLORS.primary,
+    },
+    filterBadge: {
+        position: 'absolute',
+        top: -4,
+        right: -4,
+        backgroundColor: theme.COLORS.accent,
+        borderRadius: theme.RADIUS.full,
+        minWidth: 18,
+        height: 18,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 4,
+    },
+    filterBadgeText: {
+        color: theme.COLORS.white,
+        fontSize: 10,
+        fontWeight: theme.FONT_WEIGHTS.bold,
+    },
+
+    // Loading States
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: theme.SPACING.l,
+    },
+    loadingText: {
+        marginTop: theme.SPACING.m,
+        fontSize: theme.FONT_SIZES.body,
+        color: theme.COLORS.greyMedium,
+        fontWeight: theme.FONT_WEIGHTS.medium,
+    },
+
+    // Message States
+    centerMessage: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: theme.SPACING.xxl,
+    },
+    errorTitle: {
+        fontSize: theme.FONT_SIZES.heading,
+        fontWeight: theme.FONT_WEIGHTS.bold,
+        color: theme.COLORS.black,
+        marginTop: theme.SPACING.m,
+        marginBottom: theme.SPACING.s,
+        textAlign: 'center',
+    },
+    errorText: {
+        fontSize: theme.FONT_SIZES.body,
+        color: theme.COLORS.greyMedium,
+        textAlign: 'center',
+        lineHeight: 22,
+        marginBottom: theme.SPACING.l,
+    },
+    emptyTitle: {
+        fontSize: theme.FONT_SIZES.heading,
+        fontWeight: theme.FONT_WEIGHTS.bold,
+        color: theme.COLORS.black,
+        marginTop: theme.SPACING.m,
+        marginBottom: theme.SPACING.s,
+    },
+    emptyText: {
+        fontSize: theme.FONT_SIZES.body,
+        color: theme.COLORS.greyMedium,
+        textAlign: 'center',
+        lineHeight: 22,
+    },
+
+    // Button Styles
+    retryButton: {
+        borderRadius: theme.RADIUS.m,
+        overflow: 'hidden',
+        elevation: 3,
+        shadowColor: theme.COLORS.primary,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+    },
+    retryGradient: {
+        paddingHorizontal: theme.SPACING.xl,
+        paddingVertical: theme.SPACING.m,
+    },
+    retryButtonText: {
+        color: theme.COLORS.white,
+        fontWeight: theme.FONT_WEIGHTS.bold,
+        fontSize: theme.FONT_SIZES.body,
+        textAlign: 'center',
+    },
+    backToHomeButton: {
+        marginTop: theme.SPACING.l,
+        paddingHorizontal: theme.SPACING.l,
+        paddingVertical: theme.SPACING.s,
+        borderRadius: theme.RADIUS.s,
+        borderWidth: 1,
+        borderColor: theme.COLORS.primary,
+    },
+    backToHomeText: {
+        color: theme.COLORS.primary,
+        fontWeight: theme.FONT_WEIGHTS.medium,
+        fontSize: theme.FONT_SIZES.body,
+    },
+    clearFiltersButton: {
+        marginTop: theme.SPACING.l,
+        paddingHorizontal: theme.SPACING.l,
+        paddingVertical: theme.SPACING.s,
+        borderRadius: theme.RADIUS.s,
+        borderWidth: 1,
+        borderColor: theme.COLORS.primary,
+    },
+    clearFiltersText: {
+        color: theme.COLORS.primary,
+        fontWeight: theme.FONT_WEIGHTS.medium,
+        fontSize: theme.FONT_SIZES.body,
+    },
+
+    // Scroll View Styles
+    scrollView: {
+        flex: 1,
+    },
+    scrollContent: {
+        paddingBottom: theme.SPACING.xxl,
+    },
+
+    // Results Header
+    resultsHeader: {
+        paddingHorizontal: theme.SPACING.l,
+        paddingVertical: theme.SPACING.m,
+        backgroundColor: '#EFEEE9',
+        borderBottomWidth: 1,
+        borderBottomColor: '#D8D5CB',
+    },
+    resultsCount: {
+        fontSize: theme.FONT_SIZES.heading,
+        fontWeight: theme.FONT_WEIGHTS.bold,
+        color: theme.COLORS.black,
+    },
+    resultsSubtext: {
+        fontSize: theme.FONT_SIZES.small,
+        color: theme.COLORS.greyMedium,
+        marginTop: theme.SPACING.xs,
+    },
+    activeFiltersRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: theme.SPACING.s,
+        paddingTop: theme.SPACING.s,
+        borderTopWidth: 1,
+        borderTopColor: theme.COLORS.greyLight,
+    },
+    activeFiltersText: {
+        fontSize: theme.FONT_SIZES.small,
+        color: theme.COLORS.greyMedium,
+        fontWeight: theme.FONT_WEIGHTS.medium,
+    },
+    clearFiltersLink: {
+        fontSize: theme.FONT_SIZES.small,
+        color: theme.COLORS.primary,
+        fontWeight: theme.FONT_WEIGHTS.medium,
+    },
+
+    // List Container (changed from grid to vertical list)
+    listContainer: {
+        paddingHorizontal: theme.SPACING.l,
+        paddingTop: theme.SPACING.l,
+    },
+
+    // Grid Container (keeping for reference)
+    gridContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+        paddingHorizontal: HORIZONTAL_MARGIN,
+        paddingTop: theme.SPACING.l,
+    },
+
+    // Enhanced Property Card
+    propertyCard: {
+        width: CARD_WIDTH,
+        marginBottom: theme.SPACING.l,
+        backgroundColor: '#EFEEE9',
+        borderRadius: 16,
+        overflow: 'hidden',
+        elevation: 3,
+        shadowColor: '#1E293B',
+        shadowOffset: { width: 2, height: 3 },
+        shadowOpacity: 0.08,
+        shadowRadius: 5,
+        borderTopWidth: 1.5,
+        borderLeftWidth: 1.5,
+        borderBottomWidth: 1.5,
+        borderRightWidth: 1.5,
+        borderTopColor: '#FFFFFF',
+        borderLeftColor: '#FFFFFF',
+        borderBottomColor: '#D8D5CB',
+        borderRightColor: '#D8D5CB',
+    },
+
+    // Image Container
+    imageContainer: {
+        position: 'relative',
+        height: 140,
+    },
+    propertyImage: {
+        width: '100%',
+        height: '100%',
+        backgroundColor: theme.COLORS.greyLight,
+    },
+    imageOverlay: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        height: '50%',
+    },
+
+    // Enhanced Favorite Button
+    favoriteIconContainer: {
+        position: 'absolute',
+        top: theme.SPACING.s,
+        right: theme.SPACING.s,
+        borderRadius: theme.RADIUS.full,
+        overflow: 'hidden',
+        elevation: 2,
+        shadowColor: theme.COLORS.shadow,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+    },
+    favoriteGradient: {
+        padding: theme.SPACING.s,
+        borderRadius: theme.RADIUS.full,
+    },
+
+    // Property Type Badge
+    propertyTypeBadge: {
+        position: 'absolute',
+        top: theme.SPACING.s,
+        left: theme.SPACING.s,
+        backgroundColor: theme.COLORS.primary,
+        paddingHorizontal: theme.SPACING.s,
+        paddingVertical: theme.SPACING.xs,
+        borderRadius: theme.RADIUS.s,
+    },
+    propertyTypeText: {
+        color: theme.COLORS.white,
+        fontSize: theme.FONT_SIZES.caption,
+        fontWeight: theme.FONT_WEIGHTS.medium,
+    },
+
+    // Enhanced Info Container
+    infoContainer: {
+        padding: theme.SPACING.m,
+    },
+    propertyTitle: {
+        fontSize: theme.FONT_SIZES.subheading,
+        fontWeight: theme.FONT_WEIGHTS.bold,
+        color: theme.COLORS.black,
+        marginBottom: theme.SPACING.xs,
+        lineHeight: 20,
+    },
+    locationRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: theme.SPACING.s,
+    },
+    propertyLocation: {
+        fontSize: theme.FONT_SIZES.small,
+        color: theme.COLORS.greyMedium,
+        marginLeft: theme.SPACING.xs,
+        flex: 1,
+        lineHeight: 16,
+    },
+    detailsRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: theme.SPACING.s,
+    },
+    areaText: {
+        fontSize: theme.FONT_SIZES.small,
+        color: theme.COLORS.greyMedium,
+        marginLeft: theme.SPACING.xs,
+    },
+
+    // Enhanced Price Row
+    priceRatingRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-end',
+    },
+    priceContainer: {
+        flex: 1,
+    },
+    propertyPrice: {
+        fontSize: theme.FONT_SIZES.subheading,
+        fontWeight: theme.FONT_WEIGHTS.bold,
+        color: theme.COLORS.primary,
+    },
+    purposeText: {
+        fontSize: theme.FONT_SIZES.caption,
+        color: theme.COLORS.greyMedium,
+        marginTop: theme.SPACING.xs / 2,
+    },
+    ratingContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: theme.COLORS.greyLight,
+        paddingHorizontal: theme.SPACING.s,
+        paddingVertical: theme.SPACING.xs,
+        borderRadius: theme.RADIUS.s,
+    },
+    ratingText: {
+        fontSize: theme.FONT_SIZES.small,
+        fontWeight: theme.FONT_WEIGHTS.medium,
+        color: theme.COLORS.greyDark,
+        marginLeft: theme.SPACING.xs / 2,
+    },
+
+    // Footer
+    footer: {
+        paddingHorizontal: theme.SPACING.l,
+        paddingVertical: theme.SPACING.xl,
+        alignItems: 'center',
+    },
+    footerText: {
+        fontSize: theme.FONT_SIZES.body,
+        fontWeight: theme.FONT_WEIGHTS.medium,
+        color: theme.COLORS.greyMedium,
+        textAlign: 'center',
+    },
+    footerSubtext: {
+        fontSize: theme.FONT_SIZES.small,
+        color: theme.COLORS.greyMedium,
+        textAlign: 'center',
+        marginTop: theme.SPACING.xs,
+    },
+
+    // Modal Styles
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'flex-end',
+    },
+    modalContainer: {
+        backgroundColor: theme.COLORS.white,
+        borderTopLeftRadius: theme.RADIUS.xl,
+        borderTopRightRadius: theme.RADIUS.xl,
+        maxHeight: height * 0.8,
+        minHeight: height * 0.6,
+    },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: theme.SPACING.l,
+        paddingVertical: theme.SPACING.l,
+        borderBottomWidth: 1,
+        borderBottomColor: theme.COLORS.greyLight,
+    },
+    modalTitle: {
+        fontSize: theme.FONT_SIZES.title,
+        fontWeight: theme.FONT_WEIGHTS.bold,
+        color: theme.COLORS.black,
+    },
+    modalCloseButton: {
+        padding: theme.SPACING.s,
+        borderRadius: theme.RADIUS.full,
+        backgroundColor: theme.COLORS.greyLight,
+    },
+    modalContent: {
+        flex: 1,
+        paddingHorizontal: theme.SPACING.l,
+    },
+    
+    // Filter Section Styles
+    filterSection: {
+        marginVertical: theme.SPACING.l,
+    },
+    filterLabel: {
+        fontSize: theme.FONT_SIZES.subheading,
+        fontWeight: theme.FONT_WEIGHTS.semibold,
+        color: theme.COLORS.black,
+        marginBottom: theme.SPACING.m,
+    },
+    filterOptions: {
+        marginVertical: theme.SPACING.s,
+    },
+    filterRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: theme.SPACING.s,
+    },
+    filterChip: {
+        paddingHorizontal: theme.SPACING.m,
+        paddingVertical: theme.SPACING.s,
+        borderRadius: theme.RADIUS.l,
+        backgroundColor: theme.COLORS.greyLight,
+        marginRight: theme.SPACING.s,
+        marginBottom: theme.SPACING.s,
+    },
+    filterChipActive: {
+        backgroundColor: theme.COLORS.primary,
+    },
+    filterChipText: {
+        fontSize: theme.FONT_SIZES.body,
+        fontWeight: theme.FONT_WEIGHTS.medium,
+        color: theme.COLORS.greyDark,
+    },
+    filterChipTextActive: {
+        color: theme.COLORS.white,
+    },
+    
+    // Custom Price Label
+    customPriceLabel: {
+        fontSize: theme.FONT_SIZES.small,
+        fontWeight: theme.FONT_WEIGHTS.medium,
+        color: theme.COLORS.greyMedium,
+        marginTop: theme.SPACING.m,
+        marginBottom: theme.SPACING.s,
+    },
+    
+    // Price Input Styles
+    priceInputContainer: {
+        flexDirection: 'row',
+        alignItems: 'flex-end',
+        gap: theme.SPACING.m,
+    },
+    priceInputWrapper: {
+        flex: 1,
+    },
+    priceInputLabel: {
+        fontSize: theme.FONT_SIZES.small,
+        fontWeight: theme.FONT_WEIGHTS.medium,
+        color: theme.COLORS.greyMedium,
+        marginBottom: theme.SPACING.xs,
+    },
+    priceInput: {
+        borderWidth: 1,
+        borderColor: theme.COLORS.greyLight,
+        borderRadius: theme.RADIUS.s,
+        paddingHorizontal: theme.SPACING.m,
+        paddingVertical: theme.SPACING.s,
+        fontSize: theme.FONT_SIZES.body,
+        color: theme.COLORS.black,
+        backgroundColor: theme.COLORS.white,
+    },
+    priceInputSeparator: {
+        fontSize: theme.FONT_SIZES.body,
+        color: theme.COLORS.greyMedium,
+        fontWeight: theme.FONT_WEIGHTS.medium,
+        marginBottom: theme.SPACING.s,
+    },
+    
+    // Location Input Styles
+    locationInput: {
+        borderWidth: 1,
+        borderColor: theme.COLORS.greyLight,
+        borderRadius: theme.RADIUS.s,
+        paddingHorizontal: theme.SPACING.m,
+        paddingVertical: theme.SPACING.m,
+        fontSize: theme.FONT_SIZES.body,
+        color: theme.COLORS.black,
+        backgroundColor: theme.COLORS.white,
+    },
+    
+    // Modal Footer Styles
+    modalFooter: {
+        flexDirection: 'row',
+        paddingHorizontal: theme.SPACING.l,
+        paddingVertical: theme.SPACING.l,
+        borderTopWidth: 1,
+        borderTopColor: theme.COLORS.greyLight,
+        gap: theme.SPACING.m,
+    },
+    clearButton: {
+        flex: 1,
+        paddingVertical: theme.SPACING.m,
+        borderRadius: theme.RADIUS.m,
+        borderWidth: 1,
+        borderColor: theme.COLORS.greyMedium,
+        alignItems: 'center',
+    },
+    clearButtonText: {
+        fontSize: theme.FONT_SIZES.body,
+        fontWeight: theme.FONT_WEIGHTS.medium,
+        color: theme.COLORS.greyMedium,
+    },
+    applyButton: {
+        flex: 2,
+        borderRadius: theme.RADIUS.m,
+        overflow: 'hidden',
+    },
+    applyGradient: {
+        paddingVertical: theme.SPACING.m,
+        alignItems: 'center',
+    },
+    applyButtonText: {
+        fontSize: theme.FONT_SIZES.body,
+        fontWeight: theme.FONT_WEIGHTS.bold,
+        color: theme.COLORS.white,
+    },
+
+    // Residential Card Styles (from home screen)
+    residentialCard: {
+        width: '100%',
+        marginBottom: 16,
+        borderRadius: 18,
+        backgroundColor: '#FFFFFF',
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.1,
+        shadowRadius: 12,
+        elevation: 6,
+        borderWidth: 1,
+        borderColor: '#F3F4F6',
+        position: 'relative',
+    },
+    residentialImageContainer: {
+        width: '100%',
+        height: 200,
+        backgroundColor: '#F1F5F9',
+        position: 'relative',
+        overflow: 'hidden',
+        borderTopLeftRadius: 18,
+        borderTopRightRadius: 18,
+    },
+    residentialMediaCard: {
+        width: '100%',
+        height: '100%',
+    },
+    residentialImage: {
+        width: '100%',
+        height: '100%',
+        resizeMode: 'cover',
+        borderTopLeftRadius: 16,
+        borderTopRightRadius: 16,
+    },
+    residentialFavoriteIcon: {
+        position: 'absolute',
+        top: 12,
+        right: 12,
+        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 5,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.2,
+        shadowRadius: 5,
+        elevation: 5,
+        borderWidth: 1.5,
+        borderColor: 'rgba(255, 255, 255, 0.5)',
+    },
+    residentialDetails: {
+        padding: 14,
+        paddingTop: 12,
+    },
+    residentialTitle: {
+        fontSize: 16,
+        fontWeight: '800',
+        color: '#0F172A',
+        marginBottom: 6,
+        letterSpacing: -0.3,
+    },
+    residentialLocation: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 10,
+    },
+    residentialLocationText: {
+        fontSize: 13,
+        color: '#64748B',
+        marginLeft: 4,
+        flex: 1,
+        fontWeight: '600',
+    },
+    residentialPrice: {
+        fontSize: 18,
+        fontWeight: '900',
+        color: theme.COLORS.primary,
+        letterSpacing: -0.5,
+        marginBottom: 8,
+    },
+    
+    // Property Action Buttons Styles
+    propertyActionButtons: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginTop: 6,
+        paddingTop: 6,
+        borderTopWidth: 1,
+        borderTopColor: '#F1F5F9',
+    },
+    
+    actionButton: {
+        backgroundColor: theme.COLORS.primary,
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        justifyContent: 'center',
+        alignItems: 'center',
+        elevation: 2,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.1,
+        shadowRadius: 2,
+    },
+});
+
+export default AllPropertiesScreen;

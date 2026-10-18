@@ -1,0 +1,1483 @@
+import React, { useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  TextInput,
+  Image,
+  Alert,
+  FlatList,
+  Platform,
+} from "react-native";
+import { SafeAreaView } from 'react-native-safe-area-context';
+import Icon from "react-native-vector-icons/Ionicons";
+import DateTimePicker from "@react-native-community/datetimepicker";
+
+import { formatImageUrl, formatPrice } from '../services/propertyHelpers';
+import { launchImageLibrary } from 'react-native-image-picker';
+import propertyService from '../services/propertyapi';
+
+// Fallback functions in case imports fail
+const safeFormatImageUrl = (url) => {
+  if (!url) return 'https://placehold.co/400x200/CCCCCC/888888?text=No+Image';
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  if (url.startsWith('uploads/')) return `https://backend.kirayedar24.com/${url}`;
+  return url.startsWith('/') ? `https://backend.kirayedar24.com${url}` : `https://backend.kirayedar24.com/${url}`;
+};
+
+const safeFormatPrice = (price) => {
+  if (!price) return '₹0';
+  const numPrice = typeof price === 'string' ? parseFloat(price) : price;
+  if (isNaN(numPrice)) return '₹0';
+  if (numPrice >= 10000000) return `₹${(numPrice / 10000000).toFixed(1)}Cr`;
+  if (numPrice >= 100000) return `₹${(numPrice / 100000).toFixed(1)}L`;
+  if (numPrice >= 1000) return `₹${(numPrice / 1000).toFixed(1)}K`;
+  return `₹${numPrice}`;
+};
+
+// --- Color Palette (Neumorphic) ---
+const COLORS = {
+  primary: '#FDB022',
+  primaryDark: '#D97706',
+  accent: '#FDBF4D',
+  danger: '#EF4444',
+  success: '#10B981',
+  background: '#EFEEE9',
+  card: '#EFEEE9',
+  textPrimary: '#2D3748',
+  textSecondary: '#626B78',
+  lightGray: '#E5E3DC',
+  border: '#D8D5CB',
+};
+
+// Stable InputField defined outside to prevent unmounting & keyboard dismissal
+const InputField = React.memo(({ label, value, onChangeText, keyboardType = 'default', multiline = false }) => (
+  <View style={styles.inputGroup}>
+    <Text style={styles.inputLabel}>{label}</Text>
+    <TextInput
+      style={[styles.input, multiline && styles.inputMultiline]}
+      value={value ?? ''}
+      onChangeText={(text) => onChangeText(text)}
+      keyboardType={keyboardType}
+      multiline={multiline}
+      placeholder={`Enter ${label.toLowerCase()}`}
+      placeholderTextColor="#94A3B8"
+    />
+  </View>
+));
+
+// Stable OptionSelector defined outside
+const OptionSelector = React.memo(({ label, options, value, onChange }) => (
+  <View style={styles.inputGroup}>
+    <Text style={styles.inputLabel}>{label}</Text>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.optionScroll}>
+      {options.map((option) => (
+        <TouchableOpacity
+          key={option}
+          style={[
+            styles.optionChip,
+            value === option && styles.optionChipSelected
+          ]}
+          onPress={() => onChange(option)}
+        >
+          <Text style={[
+            styles.optionChipText,
+            value === option && styles.optionChipTextSelected
+          ]}>{option}</Text>
+        </TouchableOpacity>
+      ))}
+    </ScrollView>
+  </View>
+));
+
+// Stable MultiSelectChips defined outside
+const MultiSelectChips = React.memo(({ label, options, selected, onChange }) => (
+  <View style={styles.inputGroup}>
+    <Text style={styles.inputLabel}>{label}</Text>
+    <View style={styles.chipContainer}>
+      {options.map((option) => (
+        <TouchableOpacity
+          key={option}
+          style={[
+            styles.optionChip,
+            (selected || []).includes(option) && styles.optionChipSelected
+          ]}
+          onPress={() => {
+            const newSelected = (selected || []).includes(option)
+              ? (selected || []).filter(item => item !== option)
+              : [...(selected || []), option];
+            onChange(newSelected);
+          }}
+        >
+          <Text style={[
+            styles.optionChipText,
+            (selected || []).includes(option) && styles.optionChipTextSelected
+          ]}>{option}</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  </View>
+));
+
+// Stable ContactToggle defined outside
+const ContactToggle = React.memo(({ label, value, onToggle }) => (
+  <TouchableOpacity 
+    style={[styles.contactToggle, value && styles.contactToggleActive]}
+    onPress={onToggle}
+  >
+    <Icon name={value ? "checkbox" : "square-outline"} size={20} color={value ? COLORS.primary : COLORS.textSecondary} />
+    <Text style={[styles.contactToggleText, value && styles.contactToggleTextActive]}>{label}</Text>
+  </TouchableOpacity>
+));
+
+const EditPropertyScreen = ({ navigation, route }) => {
+  // Use property passed via route params, or mock data for testing
+  const initialProperty = route?.params?.listing || route?.params?.property || {};
+  
+  console.log('====================================');
+  console.log('[EditPropertyScreen] RECEIVED DATA:');
+  console.log('====================================');
+  console.log('Full property:', JSON.stringify(initialProperty, null, 2));
+  console.log('Photos field:', initialProperty.photos);
+  console.log('PhotosAndVideo field:', initialProperty.photosAndVideo);
+  console.log('Images field:', initialProperty.images);
+  console.log('Image field:', initialProperty.image);
+  console.log('Price:', initialProperty.price);
+  console.log('Location:', initialProperty.propertyLocation);
+  console.log('Bedrooms:', initialProperty.bedrooms);
+  console.log('Bathrooms:', initialProperty.bathrooms);
+  console.log('====================================');
+
+  // Normalize incoming property keys from server
+  const normalizedProperty = {
+    ...initialProperty,
+    _id: initialProperty._id || initialProperty.id,
+    id: initialProperty._id || initialProperty.id || 'temp_' + Date.now(),
+    title: initialProperty.description || initialProperty.title || 'Property',
+    // Build location from multiple possible fields
+    location: (() => {
+      // First check direct location fields
+      if (initialProperty.propertyLocation) return initialProperty.propertyLocation;
+      if (initialProperty.location) return initialProperty.location;
+      
+      // Build from individual fields (locality, city, state, post)
+      const parts = [
+        initialProperty.locality || '',
+        initialProperty.post || '',
+        initialProperty.city || '',
+        initialProperty.state || initialProperty.propertyState || ''
+      ].filter(part => part && part.trim());
+      
+      if (parts.length > 0) return parts.join(', ');
+      
+      // Try address object
+      if (initialProperty.address && typeof initialProperty.address === 'object') {
+        const addressParts = [
+          initialProperty.address.locality || '',
+          initialProperty.address.post || initialProperty.address.city || '',
+          initialProperty.address.city || '',
+          initialProperty.address.state || ''
+        ].filter(part => part && part.trim());
+        if (addressParts.length > 0) return addressParts.join(', ');
+      }
+      
+      return '';
+    })(),
+    sqft: (() => {
+      const val = initialProperty.areaDetails || initialProperty.areaSqFt || initialProperty.sqft || initialProperty.area || initialProperty.size || '';
+      return val ? String(val).replace(/[^0-9.]/g, '') : '';
+    })(),
+    beds: initialProperty.bedrooms || initialProperty.beds || '',
+    baths: initialProperty.bathrooms || initialProperty.baths || '',
+    // specificType contains the actual property type like "Flat", "Singlex", "Villa", etc.
+    specificType: initialProperty.specificType || initialProperty.propertyType || '',
+    // purpose is Sell/Rent/Paying Guest
+    purpose: initialProperty.purpose || '',
+    // type is for display purposes (uses specificType)
+    type: initialProperty.specificType || initialProperty.propertyType || '',
+    status: initialProperty.status || initialProperty.availabilityStatus || 'pending',
+    price: initialProperty.price != null ? String(initialProperty.price) : (initialProperty.amount != null ? String(initialProperty.amount) : ''),
+    images: (() => {
+      // Handle multiple possible image field names
+      let imageArray = [];
+      
+      console.log('[EditPropertyScreen] Processing images...');
+      console.log('photos:', initialProperty.photos);
+      console.log('photosAndVideo:', initialProperty.photosAndVideo);
+      console.log('images:', initialProperty.images);
+      console.log('image:', initialProperty.image);
+      
+      if (initialProperty.photos && Array.isArray(initialProperty.photos) && initialProperty.photos.length > 0) {
+        console.log('Using photos array');
+        imageArray = initialProperty.photos;
+      } else if (initialProperty.photosAndVideo && Array.isArray(initialProperty.photosAndVideo) && initialProperty.photosAndVideo.length > 0) {
+        console.log('Using photosAndVideo array');
+        imageArray = initialProperty.photosAndVideo;
+      } else if (initialProperty.images && Array.isArray(initialProperty.images) && initialProperty.images.length > 0) {
+        console.log('Using images array');
+        imageArray = initialProperty.images;
+      } else if (initialProperty.image) {
+        console.log('Using single image');
+        imageArray = [initialProperty.image];
+      }
+      
+      console.log('imageArray before mapping:', imageArray);
+      
+      const result = imageArray.map((it) => {
+        if (!it) return null;
+        if (typeof it === 'string') return it;
+        if (it.url) return it.url;
+        if (it.uri) return { uri: it.uri, fileName: it.fileName };
+        if (it.path) return it.path;
+        if (it.file && it.file.url) return it.file.url;
+        return typeof it === 'object' ? (it.uri || it.url || JSON.stringify(it)) : String(it);
+      }).filter(Boolean);
+      
+      console.log('Final images array:', result);
+      return result;
+    })(),
+    description: initialProperty.description || 'No description available',
+    furnishing: initialProperty.furnishingStatus || initialProperty.furnishing || '',
+    parking: initialProperty.parking || '',
+    availableFor: initialProperty.availableFor || '',
+    balconies: initialProperty.balconies != null ? String(initialProperty.balconies) : '',
+    kitchenType: initialProperty.kitchenType || '',
+    floorNumber: initialProperty.floorNumber ? String(initialProperty.floorNumber) : '',
+    totalFloors: initialProperty.totalFloors ? String(initialProperty.totalFloors) : '',
+    societyMaintenance: initialProperty.societyMaintenance ? String(initialProperty.societyMaintenance) : '',
+    societyFeatures: initialProperty.societyFeatures || [],
+    contactPreferences: initialProperty.contactPreferences || { phone: true, whatsapp: true, chat: true },
+    availabilityStatus: initialProperty.availabilityStatus || '',
+    facingDirection: initialProperty.facingDirection || '',
+    // Location fields - check multiple possible field names from backend
+    propertyState: initialProperty.state || initialProperty.propertyState || 
+                   (initialProperty.address && initialProperty.address.state) || '',
+    city: initialProperty.city || 
+          (initialProperty.address && initialProperty.address.city) || '',
+    district: initialProperty.district || 
+              (initialProperty.address && initialProperty.address.district) || '',
+    locality: initialProperty.locality || 
+              (initialProperty.address && initialProperty.address.locality) || 
+              (initialProperty.address && initialProperty.address.area) || '',
+    pincode: initialProperty.pincode ? String(initialProperty.pincode) : 
+             (initialProperty.address && initialProperty.address.pincode) ? String(initialProperty.address.pincode) : '',
+    // Property category (Residential/Commercial)
+    propertyType: initialProperty.propertyType || 'Residential',
+    // Contact number
+    contactNumber: initialProperty.contactNumber || initialProperty.phone || '',
+    // Available From date
+    availableFrom: initialProperty.availableFrom ? new Date(initialProperty.availableFrom) : new Date(),
+    // Space Available (for commercial)
+    spaceAvailable: initialProperty.spaceAvailable || '',
+  };
+
+  // Debug: Log the location fields to help troubleshoot
+  console.log('====================================');
+  console.log('[EditPropertyScreen] LOCATION FIELDS DEBUG:');
+  console.log('====================================');
+  console.log('initialProperty.state:', initialProperty.state);
+  console.log('initialProperty.propertyState:', initialProperty.propertyState);
+  console.log('initialProperty.city:', initialProperty.city);
+  console.log('initialProperty.district:', initialProperty.district);
+  console.log('initialProperty.locality:', initialProperty.locality);
+  console.log('initialProperty.pincode:', initialProperty.pincode);
+  console.log('initialProperty.address:', initialProperty.address);
+  console.log('Normalized propertyState:', normalizedProperty.propertyState);
+  console.log('Normalized city:', normalizedProperty.city);
+  console.log('Normalized district:', normalizedProperty.district);
+  console.log('Normalized locality:', normalizedProperty.locality);
+  console.log('Normalized pincode:', normalizedProperty.pincode);
+  console.log('====================================');
+  
+  console.log('====================================');
+  console.log('[EditPropertyScreen] NORMALIZED DATA:');
+  console.log('====================================');
+  console.log('Images:', normalizedProperty.images);
+  console.log('Location:', normalizedProperty.location);
+  console.log('Beds:', normalizedProperty.beds);
+  console.log('Baths:', normalizedProperty.baths);
+  console.log('Price:', normalizedProperty.price);
+  console.log('====================================');
+
+  const [property, setProperty] = useState(normalizedProperty);
+  const [removedImages, setRemovedImages] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+
+  // Derived display values for preview
+  const firstImage = (property.images && property.images.length > 0)
+    ? (typeof property.images[0] === 'string' ? (formatImageUrl || safeFormatImageUrl)(property.images[0]) : property.images[0]?.uri)
+    : (property.image ? (formatImageUrl || safeFormatImageUrl)(property.image) : (formatImageUrl || safeFormatImageUrl)(null));
+
+  const displayPrice = (() => {
+    const p = property.price;
+    const n = Number(p);
+    if (!isNaN(n)) return (formatPrice || safeFormatPrice)(n);
+    return p || '';
+  })();
+
+  const handleChange = (key, value) => {
+    setProperty(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleSave = () => {
+    (async () => {
+      setLoading(true);
+      try {
+        // Basic validation
+        if (!property.price) {
+          Alert.alert('Error', 'Please fill in the Price field.');
+          setLoading(false);
+          return;
+        }
+
+        const propId = property._id || property.id;
+        // Validate Mongo ObjectId
+        const isValidObjectId = (id) => typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id);
+        if (!propId || !isValidObjectId(propId)) {
+          setLoading(false);
+          Alert.alert('Invalid property id', 'This property appears to be a local/mock item (id: ' + String(propId) + ").\n\nTo update a real property, open Edit from My Listings or ensure the route provides the server _id.");
+          return;
+        }
+
+        // Map local property fields to API expected keys
+        const payload = {
+          propertyLocation: property.location || property.propertyLocation,
+          description: property.description,
+          price: property.price ? Number(property.price) : undefined,
+          areaDetails: property.sqft ? Number(property.sqft) : undefined,
+          bedrooms: property.beds ? Number(property.beds) : undefined,
+          bathrooms: property.baths ? Number(property.baths) : undefined,
+          // specificType: Apartment, Villa, Plot, Singlex, Duplex, Room, Flat, PG, Office, Shop, Warehouse
+          specificType: property.specificType || property.type || undefined,
+          // purpose: Sell, Rent, Paying Guest
+          purpose: property.purpose || undefined,
+          // Additional fields
+          balconies: property.balconies || undefined,
+          furnishingStatus: property.furnishing || undefined,
+          parking: property.parking || undefined,
+          kitchenType: property.kitchenType || undefined,
+          floorNumber: property.floorNumber ? Number(property.floorNumber) : undefined,
+          totalFloors: property.totalFloors ? Number(property.totalFloors) : undefined,
+          availableFor: property.availableFor || undefined,
+          societyMaintenance: property.societyMaintenance || undefined,
+          availabilityStatus: property.availabilityStatus || undefined,
+          facingDirection: property.facingDirection || undefined,
+          // Location fields - use 'state' as backend expects
+          state: property.propertyState || undefined,
+          city: property.city || undefined,
+          district: property.district || undefined,
+          locality: property.locality || undefined,
+          pincode: property.pincode || undefined,
+          // Property category
+          propertyType: property.propertyType || undefined,
+          // Contact number
+          contactNumber: property.contactNumber || undefined,
+          // Available From date
+          availableFrom: property.availableFrom instanceof Date ? property.availableFrom.toISOString() : undefined,
+          // Space Available (for commercial)
+          spaceAvailable: property.spaceAvailable || undefined,
+          removedFiles: removedImages.length ? JSON.stringify(removedImages) : undefined,
+          removePhotos: removedImages.length ? JSON.stringify(removedImages) : undefined,
+        };
+
+        // Separate existing server photos from new local photos
+        const existingPhotos = (property.images || []).filter(img => {
+          if (!img) return false;
+          // Server photos are strings that don't start with file: or content:
+          if (typeof img === 'string') {
+            return !img.startsWith('file:') && !img.startsWith('content:');
+          }
+          // Or objects with uri that are server URLs
+          if (typeof img === 'object' && img.uri) {
+            return img.uri.startsWith('http') || img.uri.startsWith('uploads') || img.uri.includes('/uploads/');
+          }
+          return false;
+        }).map(img => typeof img === 'string' ? img : img.uri);
+
+        // Collect only local file objects for upload (new photos)
+        const files = (property.images || []).filter(img => {
+          if (!img) return false;
+          if (typeof img === 'object' && img.uri) {
+            // Only local files, not server URLs
+            return img.uri.startsWith('file:') || img.uri.startsWith('content:');
+          }
+          if (typeof img === 'string') {
+            return img.startsWith('file:') || img.startsWith('content:');
+          }
+          return false;
+        }).map(img => (typeof img === 'string' ? { uri: img, fileName: `file-${Date.now()}` } : img));
+
+        console.log('[EditPropertyScreen] Existing photos to keep:', existingPhotos);
+        console.log('[EditPropertyScreen] New photos to upload:', files.length);
+        console.log('[EditPropertyScreen] Photos to remove:', removedImages);
+        
+        // DEBUG: Show what's being sent to backend
+        console.log('========================================');
+        console.log('SENDING TO BACKEND:');
+        console.log('Existing photos (should be kept):', existingPhotos.length, existingPhotos);
+        console.log('New photos (to upload):', files.length);
+        console.log('Total expected photos after save:', existingPhotos.length + files.length);
+        console.log('========================================');
+
+        // Prepare FormData for file upload
+        const formData = new FormData();
+        Object.entries(payload).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) {
+            formData.append(key, value);
+          }
+        });
+
+        // Send existing photos to keep (important! so backend doesn't delete them)
+        if (existingPhotos.length > 0) {
+          formData.append('existingPhotos', JSON.stringify(existingPhotos));
+          // Also send as keepPhotos for backend compatibility
+          formData.append('keepPhotos', JSON.stringify(existingPhotos));
+        }
+
+        // Add society features if present
+        if (property.societyFeatures && property.societyFeatures.length > 0) {
+          property.societyFeatures.forEach(feature => {
+            formData.append('societyFeatures[]', feature);
+          });
+        }
+
+        // Add contact preferences if present
+        if (property.contactPreferences) {
+          Object.entries(property.contactPreferences).forEach(([key, value]) => {
+            formData.append(`contactPreferences[${key}]`, String(value));
+          });
+        }
+
+        // Attach files
+        files.forEach((file, idx) => {
+          formData.append('photosAndVideo', {
+            uri: file.uri,
+            name: file.fileName || `photo_${idx}.jpg`,
+            type: file.type || 'image/jpeg',
+          });
+        });
+
+        const resp = await propertyService.updateProperty(propId, formData);
+        const updated = resp && (resp.property || resp.data || resp);
+        setLoading(false);
+        if (resp.success) {
+          Alert.alert('Success', 'Property updated successfully', [
+            { text: 'OK', onPress: () => navigation.goBack() }
+          ]);
+        } else {
+          throw new Error(resp.message || 'Failed to update property');
+        }
+      } catch (err) {
+        console.error('Failed to update property:', err);
+        setLoading(false);
+        let message = 'Failed to update property';
+        try {
+          if (err && err.body) {
+            const body = err.body;
+            if (typeof body === 'string') message = body;
+            else if (body && body.message) message = body.message;
+            else message = JSON.stringify(body);
+          } else if (err && err.message) {
+            message = String(err.message);
+          }
+        } catch (e) {
+          message = String(err);
+        }
+        Alert.alert('Error', message);
+      }
+    })();
+  };
+
+  const handleDelete = () => {
+    Alert.alert(
+      "Confirm Delete",
+      `Are you sure you want to delete the listing for "${property.title}"? This cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Delete", 
+          style: "destructive", 
+          onPress: async () => {
+            setLoading(true);
+            try {
+              const resp = await propertyService.deleteProperty(property._id || property.id);
+              setLoading(false);
+              if (resp.success) {
+                Alert.alert(
+                  "Deleted", 
+                  "Listing removed.",
+                  [{ text: "OK", onPress: () => navigation.goBack() }]
+                );
+              } else {
+                throw new Error(resp.message || 'Failed to delete property');
+              }
+            } catch (err) {
+              setLoading(false);
+              Alert.alert('Error', err.message || 'Failed to delete property');
+            }
+          }
+        },
+      ]
+    );
+  };
+
+  const removeImage = (index) => {
+    const removed = (property.images || [])[index];
+    const updatedImages = (property.images || []).filter((_, i) => i !== index);
+    if (removed) {
+      if (typeof removed === 'string' || (typeof removed === 'object' && !removed.uri)) {
+        setRemovedImages(prev => [...prev, removed]);
+      }
+      if (typeof removed === 'object' && removed.uri && (removed.uri.startsWith('http') || removed.uri.startsWith('uploads') || removed.uri.includes('/uploads/'))) {
+        setRemovedImages(prev => [...prev, removed.uri]);
+      }
+    }
+    setProperty(prev => ({ ...prev, images: updatedImages }));
+  };
+
+  const handleImagePicker = () => {
+    const options = { mediaType: 'photo', selectionLimit: 10 };
+    console.log('[EditPropertyScreen] Opening image picker. Current images count:', (property.images || []).length);
+    console.log('[EditPropertyScreen] Current images:', property.images);
+    
+    launchImageLibrary(options, (response) => {
+      if (response.didCancel || response.errorCode) {
+        if (response.errorCode) {
+          console.warn('ImagePicker Error: ', response.errorMessage || response.errorCode);
+          Alert.alert('Error', response.errorMessage || 'Failed to pick media');
+        }
+        return;
+      }
+
+      const assets = response.assets || [];
+      console.log('[EditPropertyScreen] New images selected:', assets.length);
+      
+      const normalized = assets.map((a) => ({ uri: a.uri, type: a.type, fileName: a.fileName || `file-${Date.now()}` }));
+      
+      setProperty(prev => {
+        const existingImages = prev.images || [];
+        const newImages = [...existingImages, ...normalized];
+        console.log('[EditPropertyScreen] Existing images:', existingImages.length);
+        console.log('[EditPropertyScreen] After adding new images:', newImages.length);
+        console.log('[EditPropertyScreen] Combined images:', newImages);
+        return { ...prev, images: newImages };
+      });
+    });
+  };
+
+  return (
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity
+          style={styles.headerIcon}
+          onPress={() => navigation.goBack()}
+        >
+          <Icon name="arrow-back" size={24} color="#1A1A1A" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Edit Property</Text>
+        <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={loading}>
+          <Text style={[styles.saveText, loading && styles.saveTextLoading]}>
+            {loading ? 'Saving...' : 'Save'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView 
+        contentContainerStyle={styles.scrollContent} 
+        showsVerticalScrollIndicator={false}
+      >
+        
+        {/* Property Preview Card */}
+        <View style={styles.previewCard}>
+          <Image 
+            source={{ uri: firstImage || 'https://placehold.co/400x200/CCCCCC/888888?text=No+Image' }} 
+            style={styles.previewImage} 
+            resizeMode="cover" 
+          />
+          <View style={styles.previewOverlay} />
+          <View style={styles.previewContent}>
+          <View style={styles.previewBadges}>
+              {property.type ? (
+                <View style={styles.typeBadge}>
+                  <Text style={styles.typeBadgeText}>{property.type}</Text>
+                </View>
+              ) : null}
+              <View style={[styles.statusBadge, { 
+                backgroundColor: property.status === 'approved' || property.status === 'Active' ? '#10B981' : '#F59E0B' 
+              }]}>
+                <Text style={styles.statusBadgeText}>
+                  {property.status ? property.status.charAt(0).toUpperCase() + property.status.slice(1) : 'Pending'}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.previewPrice}>
+              <Text style={styles.previewPriceText}>{displayPrice || '₹0'}</Text>
+              <Text style={styles.previewLocationText}>{property.location || 'Location not specified'}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Section 1: Photos & Media */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Icon name="images" size={20} color={COLORS.primary} />
+            <Text style={styles.sectionTitle}>Photos ({(property.images || []).length}/10)</Text>
+          </View>
+          
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.imageScrollContent}
+          >
+            {(property.images || []).map((item, index) => {
+              // Handle both string URLs and object with uri
+              let imageUri = '';
+              if (typeof item === 'string') {
+                imageUri = (formatImageUrl || safeFormatImageUrl)(item);
+              } else if (item && item.uri) {
+                // Check if it's a local file or a server URL
+                if (item.uri.startsWith('file:') || item.uri.startsWith('content:')) {
+                  imageUri = item.uri; // Local file, use directly
+                } else {
+                  imageUri = (formatImageUrl || safeFormatImageUrl)(item.uri);
+                }
+              }
+              
+              console.log(`[EditPropertyScreen] Rendering image ${index}:`, imageUri);
+              
+              return (
+                <View key={index} style={styles.imageThumbContainer}>
+                  <Image 
+                    source={{ uri: imageUri || 'https://placehold.co/100x100/CCCCCC/888888?text=Error' }} 
+                    style={styles.imageThumb}
+                    onError={(e) => console.log('[EditPropertyScreen] Image load error:', index, e.nativeEvent.error)}
+                  />
+                  <TouchableOpacity 
+                    style={styles.deleteImageBtn} 
+                    onPress={() => removeImage(index)}
+                  >
+                    <Icon name="close-circle" size={24} color={COLORS.danger} />
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+            
+            <TouchableOpacity style={styles.addMediaBtn} onPress={handleImagePicker}>
+              <Icon name="add-circle" size={32} color={COLORS.primary} />
+              <Text style={styles.addMediaText}>Add Photo</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+
+        {/* Section 2: Location Details */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Icon name="location" size={20} color={COLORS.primary} />
+            <Text style={styles.sectionTitle}>Location Details</Text>
+          </View>
+          
+          <InputField 
+            label="State" 
+            value={property.propertyState} 
+            onChangeText={(text) => handleChange('propertyState', text)} 
+          />
+          <View style={styles.rowWrapper}>
+            <View style={styles.rowItem}>
+              <InputField 
+                label="District" 
+                value={property.district} 
+                onChangeText={(text) => handleChange('district', text)} 
+              />
+            </View>
+            <View style={styles.rowItem}>
+              <InputField 
+                label="City" 
+                value={property.city} 
+                onChangeText={(text) => handleChange('city', text)} 
+              />
+            </View>
+          </View>
+          <View style={styles.rowWrapper}>
+            <View style={styles.rowItem}>
+              <InputField 
+                label="Locality/Area" 
+                value={property.locality} 
+                onChangeText={(text) => handleChange('locality', text)} 
+              />
+            </View>
+            <View style={styles.rowItem}>
+              <InputField 
+                label="Pincode" 
+                value={property.pincode} 
+                onChangeText={(text) => handleChange('pincode', text)} 
+                keyboardType="numeric"
+              />
+            </View>
+          </View>
+        </View>
+
+        {/* Section 3: Property Details */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Icon name="information-circle" size={20} color={COLORS.primary} />
+            <Text style={styles.sectionTitle}>Property Details</Text>
+          </View>
+          
+          <View style={styles.rowWrapper}>
+            <View style={styles.rowItem}>
+              <InputField 
+                label="Bedrooms" 
+                value={String(property.beds || '')}
+                onChangeText={(text) => handleChange('beds', text)} 
+                keyboardType="numeric"
+              />
+            </View>
+            <View style={styles.rowItem}>
+              <InputField 
+                label="Bathrooms" 
+                value={String(property.baths || '')}
+                onChangeText={(text) => handleChange('baths', text)} 
+                keyboardType="numeric"
+              />
+            </View>
+          </View>
+          <View style={styles.rowWrapper}>
+            <View style={styles.rowItem}>
+              <InputField 
+                label="Balconies" 
+                value={String(property.balconies || '')}
+                onChangeText={(text) => handleChange('balconies', text)} 
+              />
+            </View>
+            <View style={styles.rowItem}>
+              <InputField 
+                label="Floor Number" 
+                value={String(property.floorNumber || '')}
+                onChangeText={(text) => handleChange('floorNumber', text)} 
+                keyboardType="numeric"
+              />
+            </View>
+          </View>
+          <View style={styles.rowWrapper}>
+            <View style={styles.rowItem}>
+              <InputField 
+                label="Total Floors" 
+                value={String(property.totalFloors || '')}
+                onChangeText={(text) => handleChange('totalFloors', text)} 
+                keyboardType="numeric"
+              />
+            </View>
+            <View style={styles.rowItem}>
+              <InputField 
+                label="Society Maintenance" 
+                value={String(property.societyMaintenance || '')}
+                onChangeText={(text) => handleChange('societyMaintenance', text)} 
+              />
+            </View>
+          </View>
+          <InputField 
+            label="Description" 
+            value={property.description} 
+            onChangeText={(text) => handleChange('description', text)} 
+            multiline
+          />
+        </View>
+
+        {/* Section 4: Property Type */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Icon name="home" size={20} color={COLORS.primary} />
+            <Text style={styles.sectionTitle}>Property Type</Text>
+          </View>
+          
+          <OptionSelector
+            label="Category"
+            options={["Residential", "Commercial"]}
+            value={property.propertyType}
+            onChange={(val) => handleChange('propertyType', val)}
+          />
+          
+          {property.propertyType === 'Commercial' ? (
+            <OptionSelector
+              label="Commercial Type"
+              options={["Office", "Shop", "Warehouse", "PG"]}
+              value={property.specificType || property.type}
+              onChange={(val) => { handleChange('specificType', val); handleChange('type', val); }}
+            />
+          ) : (
+            <OptionSelector
+              label="Residential Type"
+              options={["Apartment", "Villa", "Plot", "Singlex", "Duplex", "Room", "Flat"]}
+              value={property.specificType || property.type}
+              onChange={(val) => { handleChange('specificType', val); handleChange('type', val); }}
+            />
+          )}
+          
+          <OptionSelector
+            label="Availability Status"
+            options={["Ready to Move", "Under Construction"]}
+            value={property.availabilityStatus}
+            onChange={(val) => handleChange('availabilityStatus', val)}
+          />
+          
+          <OptionSelector
+            label="Available For"
+            options={["Boys", "Girls", "Family", "Students", "Bachelor", "Any"]}
+            value={property.availableFor}
+            onChange={(val) => handleChange('availableFor', val)}
+          />
+          
+          {/* Available From Date Picker */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Available From</Text>
+            <TouchableOpacity 
+              style={styles.datePickerButton}
+              onPress={() => setDatePickerOpen(true)}
+            >
+              <Icon name="calendar-outline" size={20} color={COLORS.primary} />
+              <Text style={styles.datePickerText}>
+                {property.availableFrom instanceof Date 
+                  ? property.availableFrom.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+                  : 'Select Date'}
+              </Text>
+            </TouchableOpacity>
+            {datePickerOpen && (
+              <DateTimePicker
+                value={property.availableFrom instanceof Date ? property.availableFrom : new Date()}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(event, selectedDate) => {
+                  setDatePickerOpen(Platform.OS === 'ios');
+                  if (selectedDate) {
+                    handleChange('availableFrom', selectedDate);
+                  }
+                }}
+                minimumDate={new Date()}
+              />
+            )}
+          </View>
+          
+          {/* Space Available (Commercial Only) */}
+          {property.propertyType === 'Commercial' && (
+            <InputField 
+              label="Space Available (sqft)" 
+              value={String(property.spaceAvailable || '')}
+              onChangeText={(text) => handleChange('spaceAvailable', text)} 
+              keyboardType="numeric"
+            />
+          )}
+        </View>
+
+        {/* Section 4: Financials & Size */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Icon name="cash" size={20} color={COLORS.primary} />
+            <Text style={styles.sectionTitle}>Pricing & Measurements</Text>
+          </View>
+          
+          <InputField 
+            label="Price (₹)" 
+            value={property.price} 
+            onChangeText={(text) => handleChange('price', text)} 
+            keyboardType="numeric"
+          />
+          
+          <InputField 
+            label="Area (sqft)" 
+            value={property.sqft} 
+            onChangeText={(text) => handleChange('sqft', text)} 
+            keyboardType="numeric"
+          />
+        </View>
+
+        {/* Section 5: Amenities & Features */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Icon name="options" size={20} color={COLORS.primary} />
+            <Text style={styles.sectionTitle}>Amenities & Features</Text>
+          </View>
+          
+          <OptionSelector
+            label="Furnishing Status"
+            options={["Furnished", "Semi-Furnished", "Unfurnished"]}
+            value={property.furnishing}
+            onChange={(val) => handleChange('furnishing', val)}
+          />
+          
+          <OptionSelector
+            label="Parking"
+            options={["Available", "Not Available"]}
+            value={property.parking}
+            onChange={(val) => handleChange('parking', val)}
+          />
+          
+          {property.propertyType === 'Residential' && (
+            <OptionSelector
+              label="Kitchen Type"
+              options={["Modular", "Simple"]}
+              value={property.kitchenType}
+              onChange={(val) => handleChange('kitchenType', val)}
+            />
+          )}
+          
+          <OptionSelector
+            label="Facing Direction"
+            options={["North", "South", "East", "West"]}
+            value={property.facingDirection}
+            onChange={(val) => handleChange('facingDirection', val)}
+          />
+          
+          <MultiSelectChips
+            label="Society Features"
+            options={["Gym", "Lift", "Guarded Gated Campus"]}
+            selected={property.societyFeatures}
+            onChange={(val) => handleChange('societyFeatures', val)}
+          />
+        </View>
+
+        {/* Section 6: Contact Preferences */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Icon name="call" size={20} color={COLORS.primary} />
+            <Text style={styles.sectionTitle}>Contact Details</Text>
+          </View>
+          
+          <InputField 
+            label="Contact Number" 
+            value={property.contactNumber} 
+            onChangeText={(text) => handleChange('contactNumber', text)} 
+            keyboardType="phone-pad"
+          />
+          
+          <Text style={styles.subSectionLabel}>Contact Preferences</Text>
+          <View style={styles.contactTogglesRow}>
+            <ContactToggle
+              label="Phone"
+              value={property.contactPreferences?.phone}
+              onToggle={() => handleChange('contactPreferences', {
+                ...property.contactPreferences,
+                phone: !property.contactPreferences?.phone
+              })}
+            />
+            <ContactToggle
+              label="WhatsApp"
+              value={property.contactPreferences?.whatsapp}
+              onToggle={() => handleChange('contactPreferences', {
+                ...property.contactPreferences,
+                whatsapp: !property.contactPreferences?.whatsapp
+              })}
+            />
+            <ContactToggle
+              label="Chat"
+              value={property.contactPreferences?.chat}
+              onToggle={() => handleChange('contactPreferences', {
+                ...property.contactPreferences,
+                chat: !property.contactPreferences?.chat
+              })}
+            />
+          </View>
+        </View>
+
+        {/* Section 7: Status Management */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Icon name="toggle" size={20} color={COLORS.primary} />
+            <Text style={styles.sectionTitle}>Listing Status</Text>
+          </View>
+          
+          <View style={styles.statusGroup}>
+            <View>
+              <Text style={styles.statusLabel}>Current Status</Text>
+              <Text style={[
+                styles.statusValue,
+                { color: property.status === 'approved' || property.status === 'Active' ? COLORS.success : COLORS.accent }
+              ]}>
+                {property.status ? property.status.charAt(0).toUpperCase() + property.status.slice(1) : 'Pending'}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Delete Button */}
+        <TouchableOpacity 
+          style={styles.deleteButton} 
+          onPress={handleDelete}
+        >
+          <Icon name="trash" size={20} color={COLORS.card} />
+          <Text style={styles.deleteText}>Delete Listing</Text>
+        </TouchableOpacity>
+
+        <View style={{ height: 30 }} />
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+
+const styles = StyleSheet.create({
+  safeArea: { 
+    flex: 1, 
+    backgroundColor: COLORS.background 
+  },
+  scrollContent: { 
+    padding: 20 
+  },
+
+  // --- Header ---
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
+    backgroundColor: "#EFEEE9",
+    borderBottomWidth: 1,
+    borderBottomColor: "#D8D5CB",
+  },
+  headerIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#EFEEE9",
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderTopWidth: 1.5,
+    borderLeftWidth: 1.5,
+    borderBottomWidth: 1.5,
+    borderRightWidth: 1.5,
+    borderTopColor: '#FFFFFF',
+    borderLeftColor: '#FFFFFF',
+    borderBottomColor: '#D8D5CB',
+    borderRightColor: '#D8D5CB',
+    elevation: 2,
+    shadowColor: '#1E293B',
+    shadowOffset: { width: 1, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+  },
+  headerTitle: { 
+    fontSize: 18, 
+    fontWeight: "700", 
+    color: "#2D3748",
+    flex: 1,
+    textAlign: "center",
+  },
+  saveBtn: { 
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    backgroundColor: "#FDB022",
+    borderRadius: 12,
+    borderTopWidth: 1.5,
+    borderLeftWidth: 1.5,
+    borderBottomWidth: 1.5,
+    borderRightWidth: 1.5,
+    borderTopColor: '#FDE68A',
+    borderLeftColor: '#FDE68A',
+    borderBottomColor: '#D97706',
+    borderRightColor: '#D97706',
+    elevation: 3,
+    shadowColor: '#D97706',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+  },
+  saveText: { 
+    fontSize: 13, 
+    fontWeight: "700", 
+    color: "#FFFFFF",
+  },
+  saveTextLoading: { 
+    opacity: 0.6,
+  },
+
+  // --- Sections ---
+  section: {
+    marginBottom: 20,
+    backgroundColor: '#EFEEE9',
+    borderRadius: 16,
+    padding: 16,
+    borderTopWidth: 1.5,
+    borderLeftWidth: 1.5,
+    borderBottomWidth: 1.5,
+    borderRightWidth: 1.5,
+    borderTopColor: '#FFFFFF',
+    borderLeftColor: '#FFFFFF',
+    borderBottomColor: '#D8D5CB',
+    borderRightColor: '#D8D5CB',
+    elevation: 2,
+    shadowColor: '#1E293B',
+    shadowOffset: { width: 2, height: 3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 5,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+    gap: 8,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#D8D5CB',
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: '#2D3748',
+  },
+
+  // --- Preview Card ---
+  previewCard: {
+    height: 190,
+    marginHorizontal: 16,
+    marginVertical: 14,
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: '#EFEEE9',
+    elevation: 4,
+    shadowColor: '#1E293B',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    position: 'relative',
+    borderWidth: 1,
+    borderColor: '#D8D5CB',
+  },
+  previewImage: {
+    width: '100%',
+    height: '100%',
+  },
+  previewOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  previewContent: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    padding: 16,
+    justifyContent: 'space-between',
+  },
+  previewBadges: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  typeBadge: {
+    backgroundColor: '#FDB022',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  typeBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  statusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  statusBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  previewPrice: {
+    alignSelf: 'flex-start',
+  },
+  previewPriceText: {
+    color: '#FFFFFF',
+    fontSize: 24,
+    fontWeight: '900',
+    marginBottom: 4,
+  },
+  previewLocationText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    opacity: 0.9,
+  },
+
+  // --- Image Gallery ---
+  imageScrollContent: {
+    gap: 12,
+  },
+  imageThumbContainer: {
+    position: 'relative',
+    height: 110,
+    width: 110,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#E5E3DC',
+    borderWidth: 1,
+    borderColor: '#D8D5CB',
+  },
+  imageThumb: {
+    height: '100%',
+    width: '100%',
+  },
+  deleteImageBtn: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    zIndex: 10,
+    backgroundColor: '#EFEEE9',
+    borderRadius: 12,
+    padding: 2,
+  },
+  addMediaBtn: {
+    height: 110,
+    width: 110,
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    borderStyle: 'dashed',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FAF8F5',
+  },
+  addMediaText: {
+    fontSize: 11,
+    color: COLORS.primary,
+    marginTop: 4,
+    fontWeight: '600'
+  },
+
+  // --- Input Fields ---
+  inputGroup: {
+    marginBottom: 14,
+  },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: '#2D3748',
+    marginBottom: 6,
+  },
+  input: {
+    backgroundColor: '#E5E3DC',
+    borderTopWidth: 1.5,
+    borderLeftWidth: 1.5,
+    borderBottomWidth: 1.5,
+    borderRightWidth: 1.5,
+    borderTopColor: '#D3D0C6',
+    borderLeftColor: '#D3D0C6',
+    borderBottomColor: '#FFFFFF',
+    borderRightColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    fontSize: 14,
+    color: '#2D3748',
+  },
+  inputMultiline: {
+    height: 100,
+    textAlignVertical: 'top',
+    paddingVertical: 12,
+  },
+  
+  // --- Date Picker ---
+  datePickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E5E3DC',
+    borderTopWidth: 1.5,
+    borderLeftWidth: 1.5,
+    borderBottomWidth: 1.5,
+    borderRightWidth: 1.5,
+    borderTopColor: '#D3D0C6',
+    borderLeftColor: '#D3D0C6',
+    borderBottomColor: '#FFFFFF',
+    borderRightColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 10,
+  },
+  datePickerText: {
+    fontSize: 14,
+    color: '#2D3748',
+    fontWeight: '500',
+  },
+
+  // --- Layout Wrappers ---
+  rowWrapper: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 0,
+  },
+  rowItem: {
+    flex: 1,
+  },
+  typeDisplay: {
+    backgroundColor: '#E5E3DC',
+    borderWidth: 1,
+    borderColor: '#D8D5CB',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    justifyContent: 'center',
+  },
+  typeText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2D3748',
+  },
+
+  // --- Status Management ---
+  statusGroup: {
+    backgroundColor: '#EFEEE9',
+    padding: 16,
+    borderRadius: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#D8D5CB',
+  },
+  statusLabel: {
+    fontSize: 12,
+    color: '#626B78',
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  statusValue: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  statusButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+  },
+  statusButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+
+  // --- Delete Button ---
+  deleteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EF4444',
+    padding: 14,
+    borderRadius: 12,
+    marginTop: 8,
+    gap: 8,
+    borderTopWidth: 1.5,
+    borderLeftWidth: 1.5,
+    borderBottomWidth: 1.5,
+    borderRightWidth: 1.5,
+    borderTopColor: '#FCA5A5',
+    borderLeftColor: '#FCA5A5',
+    borderBottomColor: '#B91C1C',
+    borderRightColor: '#B91C1C',
+    elevation: 3,
+  },
+  deleteText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+
+  // --- Option Selector Chips ---
+  optionScroll: {
+    flexGrow: 0,
+  },
+  optionChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 18,
+    backgroundColor: '#EFEEE9',
+    borderTopWidth: 1.5,
+    borderLeftWidth: 1.5,
+    borderBottomWidth: 1.5,
+    borderRightWidth: 1.5,
+    borderTopColor: '#FFFFFF',
+    borderLeftColor: '#FFFFFF',
+    borderBottomColor: '#D8D5CB',
+    borderRightColor: '#D8D5CB',
+    marginRight: 8,
+    marginBottom: 8,
+    elevation: 1,
+  },
+  optionChipSelected: {
+    backgroundColor: '#FFF8EB',
+    borderColor: '#FDB022',
+    borderWidth: 1.5,
+    elevation: 2,
+  },
+  optionChipText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#626B78',
+  },
+  optionChipTextSelected: {
+    color: '#D97706',
+    fontWeight: '700',
+  },
+  chipContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+
+  // --- Contact Preferences ---
+  contactTogglesRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  contactToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    backgroundColor: '#EFEEE9',
+    borderRadius: 12,
+    borderTopWidth: 1.5,
+    borderLeftWidth: 1.5,
+    borderBottomWidth: 1.5,
+    borderRightWidth: 1.5,
+    borderTopColor: '#FFFFFF',
+    borderLeftColor: '#FFFFFF',
+    borderBottomColor: '#D8D5CB',
+    borderRightColor: '#D8D5CB',
+    gap: 8,
+    elevation: 1,
+  },
+  contactToggleActive: {
+    backgroundColor: '#FFF8EB',
+    borderColor: '#FDB022',
+    borderWidth: 1.5,
+  },
+  contactToggleText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#626B78',
+  },
+  contactToggleTextActive: {
+    color: '#D97706',
+    fontWeight: '700',
+  },
+  subSectionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+    marginBottom: 12,
+    marginTop: 8,
+  },
+});
+
+export default EditPropertyScreen;
